@@ -498,3 +498,307 @@ select {
     min-height: 34px;
   }
 }
+
+.rotate-hint {
+  display: none;
+}
+
+.rotate-hint-window {
+  width: min(320px, calc(100vw - 28px));
+  background: #d4d0c8;
+  border: 2px solid;
+  border-color: #fff #1f1f1f #1f1f1f #fff;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.35);
+}
+
+.rotate-hint-body {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  padding: 22px 14px;
+  text-align: center;
+  border-top: 1px solid #808080;
+}
+
+.rotate-hint-body p {
+  margin: 0;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.rotate-hint-body span {
+  padding: 4px 6px;
+  background: #ffffe1;
+  border: 1px solid #808080;
+}
+
+.phone-icon {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 72px;
+  font-size: 34px;
+  font-weight: bold;
+  color: #0a246a;
+  background: #ece9d8;
+  border: 3px solid;
+  border-color: #fff #404040 #404040 #fff;
+}
+
+@media (max-width: 900px) and (orientation: landscape) {
+  body {
+    overflow: hidden;
+    font-size: 11px;
+  }
+
+  button {
+    min-height: 26px;
+    padding: 2px 7px;
+  }
+
+  button:active:not(:disabled) {
+    padding: 3px 6px 1px 8px;
+  }
+
+  .desktop {
+    min-height: 100svh;
+    padding: 4px;
+  }
+
+  .app-window {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 150px;
+    grid-template-rows: 24px 24px minmax(0, 1fr);
+    width: calc(100vw - 8px);
+    height: calc(100svh - 8px);
+    margin: 0;
+    overflow: hidden;
+  }
+
+  .title-bar {
+    grid-column: 1 / -1;
+    height: 24px;
+  }
+
+  .window-buttons span {
+    height: 16px;
+  }
+
+  .menu-bar {
+    grid-column: 1 / 2;
+    grid-row: 2 / 3;
+    min-width: 0;
+    padding: 1px 4px;
+  }
+
+  .menu-bar button {
+    min-height: 20px;
+    padding: 1px 6px;
+  }
+
+  .toolbar {
+    grid-column: 2 / 3;
+    grid-row: 2 / 4;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    align-content: start;
+    gap: 4px;
+    min-height: 0;
+    padding: 4px;
+    overflow-y: auto;
+    border-bottom: 0;
+    border-left: 1px solid #808080;
+  }
+
+  .toolbar button {
+    width: 100%;
+    min-height: 30px;
+    padding: 3px 6px;
+    text-align: left;
+  }
+
+  .toolbar button:active:not(:disabled) {
+    padding: 4px 5px 2px 7px;
+  }
+
+  #registerBtn,
+  #startBtn,
+  #nextBtn {
+    min-height: 36px;
+    font-weight: bold;
+    background: #ece9d8;
+  }
+
+  .content-grid {
+    grid-column: 1 / 2;
+    grid-row: 3 / 4;
+    grid-template-columns: minmax(0, 1fr) 168px;
+    grid-template-rows: auto minmax(88px, 1fr);
+    gap: 4px;
+    min-height: 0;
+    padding: 4px;
+    overflow: auto;
+  }
+
+  .group-box {
+    padding: 14px 5px 5px;
+  }
+
+  .group-box h1,
+  .group-box h2 {
+    top: -8px;
+    left: 8px;
+  }
+
+  .race-box,
+  .stats-box,
+  .shop-box,
+  .garage-box,
+  .log-box {
+    min-height: 0;
+  }
+
+  .race-layout {
+    grid-template-columns: 54px minmax(0, 1fr);
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .light-panel {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    min-height: 178px;
+    padding: 6px 3px;
+  }
+
+  .light {
+    width: 26px;
+    height: 26px;
+  }
+
+  .light-label {
+    width: 44px;
+    margin-top: 2px;
+    padding: 2px;
+  }
+
+  .track-panel {
+    min-width: 0;
+    min-height: 178px;
+    padding: 10px 30px 8px 40px;
+  }
+
+  .lanes {
+    gap: 5px;
+  }
+
+  .lane {
+    height: 27px;
+  }
+
+  .lane-label {
+    left: -36px;
+    top: 6px;
+    width: 32px;
+  }
+
+  .car {
+    top: 5px;
+  }
+
+  .marker {
+    top: 3px;
+    bottom: 5px;
+    width: 26px;
+    font-size: 9px;
+  }
+
+  .start-marker {
+    left: 7px;
+  }
+
+  .finish-marker {
+    right: 7px;
+  }
+
+  .race-status {
+    gap: 4px 8px;
+    margin-top: 4px;
+    padding: 3px;
+    font-size: 10px;
+  }
+
+  .stats-table th,
+  .stats-table td,
+  .shop-table th,
+  .shop-table td,
+  .garage-table th,
+  .garage-table td {
+    padding: 2px 3px;
+  }
+
+  .stats-table th {
+    width: 58px;
+  }
+
+  .shop-box,
+  .garage-box {
+    grid-column: 1 / 2;
+    max-height: 124px;
+    overflow: hidden;
+  }
+
+  .log-box {
+    grid-column: 2 / 3;
+  }
+
+  .table-scroll {
+    max-height: 90px;
+    overflow: auto;
+  }
+
+  .shop-table,
+  .garage-table {
+    min-width: 480px;
+  }
+
+  .shop-table button,
+  .garage-table button {
+    min-height: 24px;
+    padding: 1px 6px;
+  }
+
+  .panel-note {
+    margin-bottom: 4px;
+    padding: 3px;
+  }
+
+  .sub-heading {
+    margin: 5px 0 3px;
+  }
+
+  .log-output {
+    height: 92px;
+    padding: 4px;
+    font-size: 10px;
+    line-height: 1.3;
+  }
+}
+
+@media (max-width: 900px) and (orientation: portrait) {
+  .desktop {
+    display: grid;
+    min-height: 100svh;
+    place-items: center;
+    padding: 14px;
+  }
+
+  .app-window {
+    display: none;
+  }
+
+  .rotate-hint {
+    display: block;
+  }
+}
