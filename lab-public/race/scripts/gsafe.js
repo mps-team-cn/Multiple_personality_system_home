@@ -46,7 +46,6 @@ const GSafe = (() => {
     ACHIEVEMENT_INJECTION: 1,
     ACHIEVEMENT_FARMING: 2,
     INVENTORY_ANOMALY: 2,
-    PHASE_SKIP: 4,
     PHASE_INVALID: 4,
     FN_OVERRIDE: 5,
     MATH_RANDOM_HOOK: 5,
@@ -719,27 +718,7 @@ const GSafe = (() => {
       flag('PHASE_INVALID', 'phase=' + cur.phase);
     }
 
-    // ─── 阶段跳转合法性 ───
-    checkPhaseTransition(p.phase, cur.phase);
-  }
-
-  const VALID_TRANSITIONS = {
-    idle: ['countdown_red', 'game_over'],
-    countdown_red: ['countdown_yellow', 'false_start'],
-    countdown_yellow: ['countdown_green', 'false_start'],
-    countdown_green: ['racing', 'false_start'],
-    racing: ['finished'],
-    finished: ['idle'],
-    false_start: ['idle'],
-    game_over: ['idle'],
-  };
-
-  function checkPhaseTransition(from, to) {
-    if (!from || !to || from === to) return;
-    const valid = VALID_TRANSITIONS[from];
-    if (valid && valid.indexOf(to) === -1) {
-      flag('PHASE_SKIP', from + ' -> ' + to);
-    }
+    // 阶段跳变不在快照层评分：轮询可能漏掉红黄绿、完赛和下一场准备等合法中间态。
   }
 
   /* ═══ 3. 反应时间校验 ═══ */
