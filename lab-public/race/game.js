@@ -1,6 +1,9 @@
 'use strict';
 
 // 兼容旧页面入口：这里按依赖顺序加载拆分后的业务脚本。
+const raceGameParams = new URLSearchParams(window.location.search);
+const RACE_GSAFE_ENABLED = raceGameParams.get('gsafe') === '1';
+
 const RACE_GAME_SCRIPTS = [
   'config.js',
   'race-formulas.js',
@@ -11,7 +14,7 @@ const RACE_GAME_SCRIPTS = [
   'race.js',
   'parts.js',
   'storage.js',
-  'gsafe.js',
+  ...(RACE_GSAFE_ENABLED ? ['gsafe.js'] : []),
   'main.js',
 ];
 

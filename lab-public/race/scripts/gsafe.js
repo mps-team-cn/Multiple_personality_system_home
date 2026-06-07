@@ -730,7 +730,6 @@ const GSafe = (() => {
 
     if (t < 0.030) {
       flag('REACTION_INHUMAN', 'reaction=' + t.toFixed(3) + 's');
-      invalidateCurrentRace('REACTION_INHUMAN');
       consecutiveFastReactionCount++;
       return;
     }
