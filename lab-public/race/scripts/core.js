@@ -691,6 +691,7 @@ function createOwnedPart(part) {
     ...part,
     id: gameState.nextPartId++,
   };
+  return result;
 }
 
 function getPartSellPrice(part) {
@@ -1473,6 +1474,10 @@ function updateButtons() {
   const countdownOrRace = isRaceLockedPhase(phase);
   const canPrepareNextRace = isPostRacePhase(phase);
   const gameOver = phase === 'game_over';
+
+  if (typeof updateShopNewBadge === 'function') {
+    updateShopNewBadge();
+  }
 
   el.registerBtn.disabled = phase !== 'idle' && !canPrepareNextRace;
   if (canPrepareNextRace) {

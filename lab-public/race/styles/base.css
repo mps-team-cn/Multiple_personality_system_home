@@ -160,6 +160,7 @@ select {
 
 .page-tabs button {
   min-width: 0;
+  position: relative;
 }
 
 .page-tabs button.is-active {
@@ -167,6 +168,28 @@ select {
   background: #0a246a;
   border-color: #7da0d8 #001342 #001342 #7da0d8;
   box-shadow: inset 1px 1px rgba(255, 255, 255, 0.32);
+}
+
+.page-tabs button.has-new-items::after {
+  content: 'NEW';
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  min-width: 19px;
+  height: 11px;
+  padding: 0 2px;
+  color: #fff;
+  font-family: Tahoma, Arial, sans-serif;
+  font-size: 8px;
+  font-weight: bold;
+  line-height: 1;
+  letter-spacing: 0;
+  background: #d00000;
+  border: 1px solid #fff;
+  box-shadow: 1px 1px 0 #404040;
+  pointer-events: none;
 }
 
 .page-shell {

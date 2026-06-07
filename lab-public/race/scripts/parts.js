@@ -31,6 +31,24 @@ function getShopPartWeight(part) {
   return hasOwnedPart(part) ? SHOP_OWNED_PART_WEIGHT : 1;
 }
 
+function hasNewShopPart(part) {
+  return Boolean(part && !part.bought && !hasOwnedPart(part));
+}
+
+function hasNewShopParts() {
+  return gameState.shopItems.some((part) => hasNewShopPart(part));
+}
+
+function updateShopNewBadge() {
+  if (!el.shopTab) {
+    return;
+  }
+
+  const hasNewParts = hasNewShopParts();
+  el.shopTab.classList.toggle('has-new-items', hasNewParts);
+  el.shopTab.setAttribute('aria-label', hasNewParts ? '商店，有未拥有新零件' : '商店');
+}
+
 function pickWeightedBucketItem(parts, weightAdjuster = null) {
   if (parts.length === 0) {
     return null;
@@ -439,6 +457,7 @@ function renderShop() {
     el.shopBody.appendChild(card);
   });
 
+  updateShopNewBadge();
   updateButtons();
 }
 

@@ -171,6 +171,7 @@ const el = {
   clearLocalDataBtn: document.getElementById('clearLocalDataBtn'),
   raceAudioToggleBtn: document.querySelector('[data-race-audio-toggle]'),
   telemetryToggleBtn: document.getElementById('telemetryToggleBtn'),
+  shopTab: document.getElementById('shopTab'),
   tabs: Array.from(document.querySelectorAll('.page-tabs button')),
   pages: Array.from(document.querySelectorAll('.app-page')),
   lanes: document.getElementById('lanes'),
