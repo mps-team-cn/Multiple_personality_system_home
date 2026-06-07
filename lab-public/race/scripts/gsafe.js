@@ -23,7 +23,7 @@
  *
  * 硬标记 -> 立即封禁
  * 软标记 -> 累计 3 条封禁
- * 封禁通过 cookie 下发，有效期 1 年
+ * 封禁通过 cookie 下发，有效期 1 年；本地单机模式允许玩家清理本地数据后重来。
  */
 
 const GSafe = (() => {
@@ -119,6 +119,78 @@ const GSafe = (() => {
     return m ? decodeURIComponent(m[1]) : null;
   }
 
+  function removeCookie(name) {
+    document.cookie = name + '=;path=/;max-age=0;SameSite=Strict';
+    document.cookie = name + '=;path=/;expires=Thu, 01 Jan 1970 00:00:00 GMT;SameSite=Strict';
+  }
+
+  function escapeHTML(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function fallbackRaceStorageKeys() {
+    const keys = [];
+    if (typeof STORAGE_KEY !== 'undefined') keys.push(STORAGE_KEY);
+    if (typeof RACE_AUDIO_STORAGE_KEY !== 'undefined') keys.push(RACE_AUDIO_STORAGE_KEY);
+    if (typeof RACE_SESSION_STORAGE_KEY !== 'undefined') keys.push(RACE_SESSION_STORAGE_KEY);
+    if (typeof RACE_LOCAL_LOG_STORAGE_KEY !== 'undefined') keys.push(RACE_LOCAL_LOG_STORAGE_KEY);
+    if (typeof RACE_LEGACY_STORAGE_KEYS !== 'undefined' && Array.isArray(RACE_LEGACY_STORAGE_KEYS)) {
+      keys.push.apply(keys, RACE_LEGACY_STORAGE_KEYS);
+    }
+    return keys;
+  }
+
+  function clearLocalDataAndBan() {
+    try {
+      if (typeof clearAllRaceLocalData === 'function') {
+        clearAllRaceLocalData();
+      } else {
+        fallbackRaceStorageKeys().forEach(function (key) {
+          localStorage.removeItem(key);
+        });
+      }
+      localStorage.removeItem(BAN_KEY);
+    } catch (error) {
+      return {
+        ok: false,
+        message: '浏览器拒绝访问 localStorage。',
+      };
+    }
+
+    try { sessionStorage.removeItem(FP_KEY); } catch (_) {}
+    removeCookie(BAN_KEY);
+
+    return { ok: true };
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      return navigator.clipboard.writeText(text);
+    }
+
+    const input = document.createElement('textarea');
+    input.value = text;
+    input.setAttribute('readonly', 'readonly');
+    input.style.position = 'fixed';
+    input.style.left = '-9999px';
+    document.body.appendChild(input);
+    input.select();
+
+    try {
+      document.execCommand('copy');
+      return Promise.resolve();
+    } catch (error) {
+      return Promise.reject(error);
+    } finally {
+      document.body.removeChild(input);
+    }
+  }
+
   /* ═══ 封禁系统 ═══ */
   let banned = false;
   let banCode = '';
@@ -162,20 +234,23 @@ const GSafe = (() => {
   function showBanOverlay(reason, code) {
     if (document.getElementById('gsafe-overlay')) return;
 
-    const css = document.createElement('style');
-    css.id = 'gsafe-ban-css';
-    css.textContent =
-      '#gsafe-overlay{position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;font-family:"Segoe UI","Microsoft YaHei",sans-serif}' +
-      '#gsafe-card{background:#fff;border:2px solid #808080;box-shadow:4px 4px 0 #000;max-width:400px;width:90%}' +
-      '#gsafe-titlebar{background:#b71c1c;color:#fff;padding:5px 8px;font-size:12px;font-weight:700;display:flex;justify-content:space-between;align-items:center}' +
-      '#gsafe-body{padding:20px 16px;text-align:center}' +
-      '#gsafe-body p{margin:0 0 10px;font-size:14px;color:#333;line-height:1.6}' +
-      '#gsafe-body .gs-code{display:inline-block;margin:8px 0;padding:6px 16px;background:#f5f5f5;border:1px solid #ddd;border-radius:4px;font-family:monospace;font-size:13px;color:#b71c1c;letter-spacing:1px;user-select:all}' +
-      '#gsafe-body .gs-reason{font-size:11px;color:#999;margin-top:6px}' +
-      '#gsafe-actions{padding:8px 16px 16px;text-align:center}' +
-      '#gsafe-actions button{background:#d4d0c8;border:2px outset #fff;padding:4px 28px;font-size:12px;cursor:pointer;font-family:inherit}' +
-      '#gsafe-actions button:active{border-style:inset}';
-    document.head.appendChild(css);
+    if (!document.getElementById('gsafe-ban-css')) {
+      const css = document.createElement('style');
+      css.id = 'gsafe-ban-css';
+      css.textContent =
+        '#gsafe-overlay{position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;font-family:"Segoe UI","Microsoft YaHei",sans-serif}' +
+        '#gsafe-card{background:#fff;border:2px solid #808080;box-shadow:4px 4px 0 #000;max-width:440px;width:90%}' +
+        '#gsafe-titlebar{background:#b71c1c;color:#fff;padding:5px 8px;font-size:12px;font-weight:700;display:flex;justify-content:space-between;align-items:center}' +
+        '#gsafe-body{padding:20px 16px 12px;text-align:center}' +
+        '#gsafe-body p{margin:0 0 10px;font-size:14px;color:#333;line-height:1.6}' +
+        '#gsafe-body .gs-code{display:inline-block;margin:8px 0;padding:6px 16px;background:#f5f5f5;border:1px solid #ddd;border-radius:4px;font-family:monospace;font-size:13px;color:#b71c1c;letter-spacing:1px;user-select:all}' +
+        '#gsafe-body .gs-reason{font-size:11px;color:#999;margin-top:6px}' +
+        '#gsafe-actions{padding:8px 16px 16px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center}' +
+        '#gsafe-actions button{background:#d4d0c8;border:2px outset #fff;padding:5px 14px;min-height:30px;font-size:12px;cursor:pointer;font-family:inherit}' +
+        '#gsafe-actions button:active{border-style:inset}' +
+        '#gsafe-actions .gs-danger{background:#f2c7c7;color:#7f1111}';
+      document.head.appendChild(css);
+    }
 
     const overlay = document.createElement('div');
     overlay.id = 'gsafe-overlay';
@@ -183,15 +258,44 @@ const GSafe = (() => {
       '<div id="gsafe-card">' +
         '<div id="gsafe-titlebar"><span>GSafe v' + VER + ' - 安全警告</span><span>&#10006;</span></div>' +
         '<div id="gsafe-body">' +
-          '<p>你已被封禁，如有问题请申诉。</p>' +
-          '<div class="gs-code">' + (code || 'N/A') + '</div>' +
-          '<div class="gs-reason">原因：' + (reason || '未知') + '</div>' +
+          '<p>你已被封禁。本地单机数据可以清理后重新开始。</p>' +
+          '<div class="gs-code">' + escapeHTML(code || 'N/A') + '</div>' +
+          '<div class="gs-reason">原因：' + escapeHTML(reason || '未知') + '</div>' +
         '</div>' +
-        '<div id="gsafe-actions"><button id="gsafe-ok">确定</button></div>' +
+        '<div id="gsafe-actions">' +
+          '<button id="gsafe-reload" data-gsafe-action="reload" type="button">刷新</button>' +
+          '<button id="gsafe-copy" data-gsafe-action="copy" type="button">复制封禁码</button>' +
+          '<button id="gsafe-clear" class="gs-danger" data-gsafe-action="clear" type="button">清理本地数据并重来</button>' +
+        '</div>' +
       '</div>';
     document.body.appendChild(overlay);
 
-    document.getElementById('gsafe-ok').addEventListener('click', function () {
+    document.getElementById('gsafe-reload').addEventListener('click', function () {
+      location.reload();
+    });
+
+    document.getElementById('gsafe-copy').addEventListener('click', function (event) {
+      const button = event.currentTarget;
+      copyText(code || '')
+        .then(function () {
+          button.textContent = '已复制';
+        })
+        .catch(function () {
+          button.textContent = '复制失败';
+        });
+    });
+
+    document.getElementById('gsafe-clear').addEventListener('click', function () {
+      const confirmed = window.confirm('确定要清理本地 Race 数据和 GSafe 封禁标记，然后重新开始吗？此操作不可恢复。');
+      if (!confirmed) return;
+
+      const result = clearLocalDataAndBan();
+      if (!result.ok) {
+        window.alert('清理失败：' + result.message);
+        return;
+      }
+
+      banned = false;
       location.reload();
     });
 
@@ -207,7 +311,7 @@ const GSafe = (() => {
     // 拦截鼠标
     document.addEventListener('click', function (e) {
       if (!banned) return;
-      if (e.target.id === 'gsafe-ok') return;
+      if (e.target.closest && e.target.closest('[data-gsafe-action]')) return;
       e.preventDefault();
       e.stopPropagation();
     }, true);
