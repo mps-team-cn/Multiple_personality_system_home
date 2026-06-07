@@ -1097,6 +1097,15 @@ function createSaveData() {
       lastUnlocked: gameState.achievements.lastUnlocked.slice(),
     },
   };
+
+  // GSafe 存档校验和：防篡改
+  if (typeof gsafeChecksum === 'function') {
+    try {
+      result._gsafeChecksum = gsafeChecksum(result);
+    } catch (_) {}
+  }
+
+  return result;
 }
 
 // 读档防御层：丢弃非法零件、修正装备槽、迁移旧字段并保护异常反应纪录。

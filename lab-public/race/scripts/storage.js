@@ -47,6 +47,20 @@ function readStoredGameData() {
     };
   }
 
+  // GSafe 存档校验：检测 localStorage 篡改
+  if (typeof gsafeVerifyChecksum === 'function') {
+    try {
+      if (parsedData._gsafeChecksum !== undefined) {
+        if (!gsafeVerifyChecksum(parsedData)) {
+          return {
+            status: 'invalid',
+            message: '存档数据校验失败，可能被篡改。',
+          };
+        }
+      }
+    } catch (_) {}
+  }
+
   return {
     status: 'ok',
     saveData,
