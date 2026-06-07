@@ -2,13 +2,7 @@ name = "mps-lab"
 compatibility_date = "2026-06-07"
 pages_build_output_dir = "dist-lab"
 
-# Bind the existing D1 database in the Cloudflare Pages dashboard:
-# Settings -> Bindings -> D1 database -> variable name: DB -> database: mps-user-logs.
-#
-# If you deploy or run Pages through Wrangler, fill in the real database_id
-# from Cloudflare D1 and uncomment the binding below.
-#
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "mps-user-logs"
-# database_id = "REPLACE_WITH_MPS_USER_LOGS_DATABASE_ID"
+[[d1_databases]]
+binding = "DB"
+database_name = "mps-user-logs"
+database_id = "84a081ff-752b-4cdd-8d05-661903fb22bb"
