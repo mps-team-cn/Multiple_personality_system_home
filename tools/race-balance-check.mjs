@@ -14,16 +14,19 @@ const SOURCE_FILES = {
   race: path.join(ROOT_DIR, 'lab-public/race/scripts/race.js'),
 };
 
-const DEFAULT_CHECKPOINTS = [0, 8, 18];
+const DEFAULT_CHECKPOINTS = [0, 8, 18, 55];
 const DEFAULT_REACTION_SECONDS = 0.38;
 const DEFAULT_SAMPLE_COUNT = 320;
 const DEFAULT_TOP_K = 24;
+const DEFAULT_MYTHIC_LEVELS = [0];
+const LATE_GAME_RACE_COUNT = 55;
+const LATE_GAME_DIFFICULTY_KEYS = new Set(['nightmare']);
 const DEFAULT_FOCUS = {
-  easy: [0, 8],
-  normal: [0, 8],
-  hard: [8, 18],
-  expert: [8, 18],
-  nightmare: [8, 18],
+  easy: [8, 18],
+  normal: [8, 18],
+  hard: [18],
+  expert: [18],
+  nightmare: [18, 55],
 };
 
 const PERSONALITY_BY_ID = {
@@ -50,8 +53,48 @@ const DIFFICULTY_TARGETS = {
 };
 
 const DEFAULT_MODE = 'enumerate';
-const DEFAULT_PROFILE_BUILDS = ['initial', 'mid', 'late'];
-const DEFAULT_PROFILE_RACE_COUNTS = [0, 15, 38];
+const DEFAULT_PROFILE_BUILDS = ['initial', 'mid', 'late', 'mythic5', 'mythic10'];
+const DEFAULT_PROFILE_RACE_COUNTS = [0, 15, 38, 55, 100];
+const FULL_MYTHIC_PART_KEYS = [
+  'Engine:航空燃料调校机',
+  'Tire:赛道之神热熔胎',
+  'Gearbox:零延迟序列变速箱',
+  'Body:镁合金竞技壳',
+  'Intake:赛用氮氧加速系统',
+  'Exhaust:钛合金全段排气总成',
+  'Turbo:军规增压核心',
+  'Stability:主动液压悬挂系统',
+];
+const STABLE_MYTHIC_PART_KEYS = [
+  'Engine:航空燃料调校机',
+  'Tire:赛道之神热熔胎',
+  'Gearbox:雪主任祖传扳手',
+  'Body:轻量复合车门',
+  'Intake:风洞调校进气盒',
+  'Exhaust:钛合金全段排气总成',
+  'Turbo:可变截面涡轮',
+  'Stability:主动液压悬挂系统',
+];
+const MYTHIC5_STABLE_PART_KEYS = [
+  'Engine:航空燃料调校机',
+  'Tire:赛道之神热熔胎',
+  'Gearbox:零延迟序列变速箱',
+  'Body:碳纤维全车壳',
+  'Intake:风洞调校进气盒',
+  'Exhaust:钛合金全段排气总成',
+  'Turbo:双涡管套件',
+  'Stability:主动液压悬挂系统',
+];
+const MYTHIC10_STABLE_PART_KEYS = [
+  'Engine:航空燃料调校机',
+  'Tire:赛道之神热熔胎',
+  'Gearbox:雪主任祖传扳手',
+  'Body:轻量复合车门',
+  'Intake:风洞调校进气盒',
+  'Exhaust:钛合金全段排气总成',
+  'Turbo:军规增压核心',
+  'Stability:主动液压悬挂系统',
+];
 const BUILD_PROFILES = {
   initial: {
     label: '初始车',
@@ -70,18 +113,28 @@ const BUILD_PROFILES = {
     ],
   },
   late: {
-    label: '后期参考车',
-    description: 'nightmare 奖池高配满装',
-    partKeys: [
-      'Engine:航空燃料调校机',
-      'Tire:赛道之神热熔胎',
-      'Gearbox:零延迟序列变速箱',
-      'Body:镁合金竞技壳',
-      'Intake:赛用氮氧加速系统',
-      'Exhaust:钛合金全段排气总成',
-      'Turbo:军规增压核心',
-      'Stability:主动液压悬挂系统',
-    ],
+    label: '后期稳定强配',
+    description: '神话版本后期强配，但保留稳定要求，不追求全槽位神话',
+    partKeys: STABLE_MYTHIC_PART_KEYS,
+    mythicUpgradeLevel: 0,
+  },
+  mythic5: {
+    label: '神话 +5 稳定强配',
+    description: '后期稳定强配中的神话件 +5，覆盖 50 场以后长期养成段',
+    partKeys: MYTHIC5_STABLE_PART_KEYS,
+    mythicUpgradeLevel: 5,
+  },
+  mythic10: {
+    label: '神话 +10 稳定强配',
+    description: '后期稳定强配中的神话件 +10，覆盖满强化强度上限',
+    partKeys: MYTHIC10_STABLE_PART_KEYS,
+    mythicUpgradeLevel: 10,
+  },
+  fullMythic: {
+    label: '全神话对照车',
+    description: '压力测试用：全槽位神话并不等于最强，稳定不足时会明显掉速',
+    partKeys: FULL_MYTHIC_PART_KEYS,
+    mythicUpgradeLevel: 10,
   },
 };
 
@@ -127,6 +180,13 @@ function parseIntegerList(rawValue) {
     .filter((value) => Number.isInteger(value) && value >= 0);
 }
 
+function parseUpgradeLevelList(rawValue) {
+  return parseIntegerList(rawValue)
+    .map((value) => clamp(value, 0, 10))
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .sort((left, right) => left - right);
+}
+
 function parseStringList(rawValue) {
   return rawValue
     .split(',')
@@ -141,6 +201,7 @@ function parseArgs(argv) {
     reactionSeconds: DEFAULT_REACTION_SECONDS,
     sampleCount: DEFAULT_SAMPLE_COUNT,
     topK: DEFAULT_TOP_K,
+    mythicLevels: DEFAULT_MYTHIC_LEVELS.slice(),
     difficultyFilter: null,
     profileBuilds: DEFAULT_PROFILE_BUILDS.slice(),
     profileRaceCounts: DEFAULT_PROFILE_RACE_COUNTS.slice(),
@@ -169,6 +230,8 @@ function parseArgs(argv) {
       if (Number.isInteger(value) && value > 0) {
         args.topK = value;
       }
+    } else if (arg.startsWith('--mythic-levels=')) {
+      args.mythicLevels = parseUpgradeLevelList(arg.slice('--mythic-levels='.length));
     } else if (arg.startsWith('--difficulty=')) {
       const value = arg.slice('--difficulty='.length).trim();
       args.difficultyFilter = value || null;
@@ -193,6 +256,10 @@ function parseArgs(argv) {
     args.profileRaceCounts = DEFAULT_PROFILE_RACE_COUNTS.slice();
   }
 
+  if (args.mythicLevels.length === 0) {
+    args.mythicLevels = DEFAULT_MYTHIC_LEVELS.slice();
+  }
+
   if (args.mode !== 'enumerate' && args.mode !== 'profiles') {
     throw new Error(`不支持的模式：${args.mode}`);
   }
@@ -202,6 +269,16 @@ function parseArgs(argv) {
   }
 
   return args;
+}
+
+function shouldCheckRaceCountForDifficulty(difficultyKey, raceCount) {
+  return raceCount < LATE_GAME_RACE_COUNT || LATE_GAME_DIFFICULTY_KEYS.has(difficultyKey);
+}
+
+function resolveDifficultyCheckpoints(difficultyKey, checkpoints) {
+  return checkpoints.filter((checkpoint) =>
+    shouldCheckRaceCountForDifficulty(difficultyKey, checkpoint)
+  );
 }
 
 function loadRaceData() {
@@ -228,6 +305,9 @@ globalThis.__raceBalanceData = {
   EQUIPMENT_SLOTS,
   FINISH,
   LOOT_POOLS,
+  MYTHIC_UPGRADE_BONUS_PER_LEVEL,
+  MYTHIC_UPGRADE_MAX_LEVEL,
+  MYTHIC_UPGRADE_STAT_KEYS,
   OPPONENT_CHASE_CAP,
   OPPONENT_CHASE_RAMP_RACES,
   OPPONENT_CHASE_START_RACE,
@@ -243,6 +323,7 @@ globalThis.__raceBalanceData = {
   return {
     ...context.__raceBalanceData,
     sourceText: {
+      config: configCode,
       core: coreSource,
       formulas: formulasSource,
       race: raceSource,
@@ -251,9 +332,16 @@ globalThis.__raceBalanceData = {
 }
 
 function validateSourceTexts(sourceText) {
+  const requiredConfigTokens = [
+    'const MYTHIC_UPGRADE_MAX_LEVEL',
+    'const MYTHIC_UPGRADE_BONUS_PER_LEVEL',
+    'const MYTHIC_UPGRADE_STAT_KEYS',
+  ];
   const requiredCoreTokens = [
     'function getDifficultyEntryFee',
     'Math.round((ENTRY_FEE * multiplier)',
+    'function getMythicUpgradeCost',
+    'function applyMythicUpgradeBonus',
   ];
   const requiredFormulaTokens = [
     'function computePlayerPower',
@@ -263,6 +351,12 @@ function validateSourceTexts(sourceText) {
     'function computeReactionOutcome',
   ];
   const requiredRaceTokens = ['function tickRace', 'function startPlayerCar'];
+
+  requiredConfigTokens.forEach((token) => {
+    if (!sourceText.config.includes(token)) {
+      throw new Error(`未在 config.js 中找到神话强化配置片段：${token}`);
+    }
+  });
 
   requiredCoreTokens.forEach((token) => {
     if (!sourceText.core.includes(token)) {
@@ -283,8 +377,88 @@ function validateSourceTexts(sourceText) {
   });
 }
 
-function buildDifficultyOptions(raceData, difficultyKey) {
+function normalizeMythicUpgradeLevel(raceData, level) {
+  return clamp(Math.floor(Number(level) || 0), 0, raceData.MYTHIC_UPGRADE_MAX_LEVEL);
+}
+
+function isMythicPart(part) {
+  return Boolean(part && part.rarity === 'mythic');
+}
+
+function getMythicUpgradeCost(raceData, part, level) {
+  const currentLevel = normalizeMythicUpgradeLevel(raceData, level);
+  const baseCost = Math.max(1800, Math.round((Number(part && part.price) || 0) * 0.4));
+  return Math.round(baseCost * (1 + currentLevel * 0.45));
+}
+
+function getTotalMythicUpgradeCost(raceData, part, targetLevel) {
+  const level = normalizeMythicUpgradeLevel(raceData, targetLevel);
+  let total = 0;
+
+  for (let currentLevel = 0; currentLevel < level; currentLevel += 1) {
+    total += getMythicUpgradeCost(raceData, part, currentLevel);
+  }
+
+  return total;
+}
+
+function applyMythicUpgradeBonus(raceData, part, upgradeLevel) {
+  const level = normalizeMythicUpgradeLevel(raceData, upgradeLevel);
+  if (!isMythicPart(part) || level <= 0) {
+    return part;
+  }
+
+  const multiplier = 1 + level * raceData.MYTHIC_UPGRADE_BONUS_PER_LEVEL;
+  const upgraded = {
+    ...part,
+    changes: { ...(part.changes || {}) },
+  };
+
+  raceData.MYTHIC_UPGRADE_STAT_KEYS.forEach((key) => {
+    const value = Number(upgraded.changes[key]);
+    if (Number.isFinite(value) && value > 0) {
+      upgraded.changes[key] = Math.round(value * multiplier);
+    }
+  });
+
+  return upgraded;
+}
+
+function createPartOption(raceData, slot, part, upgradeLevel = 0) {
+  const normalizedUpgradeLevel = isMythicPart(part)
+    ? normalizeMythicUpgradeLevel(raceData, upgradeLevel)
+    : 0;
+  const effectivePart = applyMythicUpgradeBonus(raceData, part, normalizedUpgradeLevel);
+  const upgradeCost = isMythicPart(part)
+    ? getTotalMythicUpgradeCost(raceData, part, normalizedUpgradeLevel)
+    : 0;
+  const upgradeSuffix = normalizedUpgradeLevel > 0 ? `+${normalizedUpgradeLevel}` : '';
+
+  return {
+    slot,
+    key: `${slot}:${part.name}${upgradeSuffix}`,
+    name: part.name,
+    rarity: part.rarity,
+    upgradeLevel: normalizedUpgradeLevel,
+    basePrice: part.price,
+    upgradeCost,
+    price: part.price + upgradeCost,
+    engine: Number(effectivePart.changes.engine || 0),
+    tire: Number(effectivePart.changes.tire || 0),
+    gearbox: Number(effectivePart.changes.gearbox || 0),
+    stability: Number(effectivePart.changes.stability || 0),
+    weight: Number(effectivePart.changes.weight || 0),
+    hp: Number(effectivePart.changes.hp || 0),
+  };
+}
+
+function buildDifficultyOptions(raceData, difficultyKey, mythicLevels = DEFAULT_MYTHIC_LEVELS) {
   const allowedRarities = new Set(raceData.LOOT_POOLS[difficultyKey] || []);
+  const normalizedMythicLevels = mythicLevels
+    .map((level) => normalizeMythicUpgradeLevel(raceData, level))
+    .filter((level, index, levels) => levels.indexOf(level) === index);
+  const effectiveMythicLevels =
+    normalizedMythicLevels.length > 0 ? normalizedMythicLevels : DEFAULT_MYTHIC_LEVELS;
 
   return raceData.EQUIPMENT_SLOTS.map((slot) => {
     const options = [
@@ -308,18 +482,9 @@ function buildDifficultyOptions(raceData, difficultyKey) {
         return;
       }
 
-      options.push({
-        slot,
-        key: `${slot}:${part.name}`,
-        name: part.name,
-        rarity: part.rarity,
-        price: part.price,
-        engine: Number(part.changes.engine || 0),
-        tire: Number(part.changes.tire || 0),
-        gearbox: Number(part.changes.gearbox || 0),
-        stability: Number(part.changes.stability || 0),
-        weight: Number(part.changes.weight || 0),
-        hp: Number(part.changes.hp || 0),
+      const upgradeLevels = isMythicPart(part) ? effectiveMythicLevels : [0];
+      upgradeLevels.forEach((upgradeLevel) => {
+        options.push(createPartOption(raceData, slot, part, upgradeLevel));
       });
     });
 
@@ -352,6 +517,38 @@ function findPartByKey(raceData, partKey) {
   return raceData.PART_POOL.find((part) => part.type === slot && part.name === name) || null;
 }
 
+function getProfileMythicUpgradeLevel(raceData, profile, part) {
+  if (!isMythicPart(part)) {
+    return 0;
+  }
+
+  const partKey = `${part.type}:${part.name}`;
+  if (profile.mythicUpgradeLevels && partKey in profile.mythicUpgradeLevels) {
+    return normalizeMythicUpgradeLevel(raceData, profile.mythicUpgradeLevels[partKey]);
+  }
+
+  return normalizeMythicUpgradeLevel(raceData, profile.mythicUpgradeLevel || 0);
+}
+
+function summarizeMythicUpgradeOptions(options) {
+  const mythicOptions = options.filter((option) => option.rarity === 'mythic');
+  if (mythicOptions.length === 0) {
+    return '-';
+  }
+
+  const levelCounts = mythicOptions.reduce((counts, option) => {
+    const level = Number(option.upgradeLevel) || 0;
+    counts[level] = (counts[level] || 0) + 1;
+    return counts;
+  }, {});
+
+  return Object.keys(levelCounts)
+    .map(Number)
+    .sort((left, right) => left - right)
+    .map((level) => `+${level}×${levelCounts[level]}`)
+    .join(' / ');
+}
+
 function createProfileCandidate(raceData, difficultyKey, profileKey) {
   const profile = BUILD_PROFILES[profileKey];
 
@@ -359,7 +556,6 @@ function createProfileCandidate(raceData, difficultyKey, profileKey) {
     throw new Error(`未定义的 build profile：${profileKey}`);
   }
 
-  // TODO: balance checker should optionally account for mythic upgrade bonus.
   const totals = { ...raceData.BASE_PLAYER_STATS };
   const options = profile.partKeys.map((partKey) => {
     const part = findPartByKey(raceData, partKey);
@@ -368,19 +564,21 @@ function createProfileCandidate(raceData, difficultyKey, profileKey) {
       throw new Error(`未找到 build profile 零件：${partKey}`);
     }
 
-    totals.engine += Number(part.changes.engine || 0);
-    totals.tire += Number(part.changes.tire || 0);
-    totals.gearbox += Number(part.changes.gearbox || 0);
-    totals.stability += Number(part.changes.stability || 0);
-    totals.weight += Number(part.changes.weight || 0);
-    totals.hp += Number(part.changes.hp || 0);
+    const option = createPartOption(
+      raceData,
+      part.type,
+      part,
+      getProfileMythicUpgradeLevel(raceData, profile, part)
+    );
 
-    return {
-      slot: part.type,
-      name: part.name,
-      rarity: part.rarity,
-      price: part.price,
-    };
+    totals.engine += option.engine;
+    totals.tire += option.tire;
+    totals.gearbox += option.gearbox;
+    totals.stability += option.stability;
+    totals.weight += option.weight;
+    totals.hp += option.hp;
+
+    return option;
   });
   const stats = computePlayerStats(raceData, totals);
   const playerRating = raceData.RaceFormulaUtils.computePlayerRating(stats);
@@ -391,10 +589,12 @@ function createProfileCandidate(raceData, difficultyKey, profileKey) {
     profileKey,
     profileLabel: profile.label,
     profileDescription: profile.description,
-    configKey: profile.partKeys.join('|') || 'empty',
+    configKey: options.map((option) => option.key).join('|') || 'empty',
     options,
     stats,
     totalCost: options.reduce((sum, option) => sum + option.price, 0),
+    upgradeCost: options.reduce((sum, option) => sum + option.upgradeCost, 0),
+    mythicUpgradeSummary: summarizeMythicUpgradeOptions(options),
     playerRating,
     playerPower,
     simulations: {},
@@ -509,6 +709,9 @@ function createCandidateSnapshot({
       slot: option.slot,
       name: option.name,
       rarity: option.rarity,
+      upgradeLevel: option.upgradeLevel || 0,
+      basePrice: option.basePrice || option.price,
+      upgradeCost: option.upgradeCost || 0,
       price: option.price,
     })),
     stats,
@@ -521,6 +724,8 @@ function createCandidateSnapshot({
       minimumGap: Math.min(...focusGaps),
     },
     profile,
+    upgradeCost: selectedOptions.reduce((sum, option) => sum + (option.upgradeCost || 0), 0),
+    mythicUpgradeSummary: summarizeMythicUpgradeOptions(selectedOptions),
     simulations: {},
   };
 }
@@ -770,6 +975,8 @@ function simulateProfileScenario({
     averageOpponentStrength: totalOpponentStrength / sampleCount,
     opponentPlayerRatio: totalOpponentStrength / sampleCount / candidate.playerRating,
     totalCost: candidate.totalCost,
+    upgradeCost: candidate.upgradeCost || 0,
+    mythicUpgradeSummary: candidate.mythicUpgradeSummary || '-',
     config: formatConfig(candidate),
   };
 }
@@ -789,12 +996,17 @@ function getFocusStats(candidate, focusCheckpoints) {
 function resolveFocusCheckpoints(difficultyKey, checkpoints) {
   const preferred = DEFAULT_FOCUS[difficultyKey] || checkpoints;
   const filtered = preferred.filter((checkpoint) => checkpoints.includes(checkpoint));
-  return filtered.length > 0 ? filtered : checkpoints;
+  const lateCheckpoints = LATE_GAME_DIFFICULTY_KEYS.has(difficultyKey)
+    ? checkpoints.filter((checkpoint) => checkpoint >= LATE_GAME_RACE_COUNT)
+    : [];
+  const merged = [...new Set([...filtered, ...lateCheckpoints])].sort((left, right) => left - right);
+
+  return merged.length > 0 ? merged : checkpoints;
 }
 
-function enumerateDifficulty({ raceData, difficultyKey, checkpoints, topK }) {
+function enumerateDifficulty({ raceData, difficultyKey, checkpoints, topK, mythicLevels }) {
   const focusCheckpoints = resolveFocusCheckpoints(difficultyKey, checkpoints);
-  const slotOptions = buildDifficultyOptions(raceData, difficultyKey);
+  const slotOptions = buildDifficultyOptions(raceData, difficultyKey, mythicLevels);
   const selectedOptions = new Array(slotOptions.length);
   const totals = {
     engine: raceData.BASE_PLAYER_STATS.engine,
@@ -916,7 +1128,10 @@ function formatConfig(candidate) {
   return (
     candidate.options
       .filter((option) => option.name !== '-')
-      .map((option) => `${option.slot}=${option.name}`)
+      .map((option) => {
+        const upgradeSuffix = option.upgradeLevel > 0 ? ` +${option.upgradeLevel}` : '';
+        return `${option.slot}=${option.name}${upgradeSuffix}`;
+      })
       .join(' / ') || '全空配'
   );
 }
@@ -1043,6 +1258,8 @@ function printDifficultyReport({ raceData, result, diagnosis, checkpoints }) {
       return {
         类型: label,
         成本: candidate.totalCost,
+        强化成本: candidate.upgradeCost || 0,
+        神话强化: candidate.mythicUpgradeSummary || '-',
         Rating: formatNumber(candidate.playerRating, 3),
         焦点平均胜率: formatPercent(focus.averageWinRate),
         焦点最低胜率: formatPercent(focus.minimumWinRate),
@@ -1103,7 +1320,14 @@ function printDifficultyReport({ raceData, result, diagnosis, checkpoints }) {
   });
 }
 
-function printProfileReport({ raceData, difficultyKey, scenarios, sampleCount, reactionSeconds }) {
+function printProfileReport({
+  raceData,
+  difficultyKey,
+  scenarios,
+  sampleCount,
+  reactionSeconds,
+  skippedLateScenarioCount = 0,
+}) {
   const difficulty = raceData.DIFFICULTIES[difficultyKey];
 
   console.log(`\n=== ${difficulty.name} (${difficultyKey}) / 固定 build 回归 ===`);
@@ -1121,6 +1345,8 @@ function printProfileReport({ raceData, difficultyKey, scenarios, sampleCount, r
       描述: scenario.buildDescription,
       raceCount: scenario.raceCount,
       成本: scenario.totalCost,
+      强化成本: scenario.upgradeCost,
+      神话强化: scenario.mythicUpgradeSummary,
       玩家Rating: formatNumber(scenario.playerRating, 3),
       对手均强: formatNumber(scenario.averageOpponentStrength, 3),
       强度比: formatNumber(scenario.opponentPlayerRatio, 3),
@@ -1134,6 +1360,12 @@ function printProfileReport({ raceData, difficultyKey, scenarios, sampleCount, r
   scenarios.forEach((scenario) => {
     console.log(`${scenario.buildLabel}: ${scenario.config}`);
   });
+
+  if (skippedLateScenarioCount > 0) {
+    console.log(
+      `- 已跳过 ${skippedLateScenarioCount} 个 ${LATE_GAME_RACE_COUNT}+ 场场景：55 场以后只检测噩梦难度`
+    );
+  }
 }
 
 function main() {
@@ -1167,17 +1399,38 @@ function main() {
     ]);
 
     difficultyKeys.forEach((difficultyKey) => {
-      const scenarios = args.profileBuilds.map((profileKey, index) =>
-        simulateProfileScenario({
-          raceData,
-          candidate: createProfileCandidate(raceData, difficultyKey, profileKey),
-          difficultyKey,
+      let skippedLateScenarioCount = 0;
+      const scenarios = args.profileBuilds
+        .map((profileKey, index) => ({
+          profileKey,
           raceCount: args.profileRaceCounts[index],
-          sampleCount: args.sampleCount,
-          seedPrefix: args.seed,
-          reactionSeconds: args.reactionSeconds,
+        }))
+        .filter(({ raceCount }) => {
+          const shouldCheck = shouldCheckRaceCountForDifficulty(difficultyKey, raceCount);
+          if (!shouldCheck) {
+            skippedLateScenarioCount += 1;
+          }
+          return shouldCheck;
         })
-      );
+        .map(({ profileKey, raceCount }) =>
+          simulateProfileScenario({
+            raceData,
+            candidate: createProfileCandidate(raceData, difficultyKey, profileKey),
+            difficultyKey,
+            raceCount,
+            sampleCount: args.sampleCount,
+            seedPrefix: args.seed,
+            reactionSeconds: args.reactionSeconds,
+          })
+        );
+
+      if (scenarios.length === 0) {
+        console.log(
+          `\n=== ${raceData.DIFFICULTIES[difficultyKey].name} (${difficultyKey}) / 固定 build 回归 ===`
+        );
+        console.log(`- 已跳过全部场景：55 场以后只检测噩梦难度`);
+        return;
+      }
 
       printProfileReport({
         raceData,
@@ -1185,6 +1438,7 @@ function main() {
         scenarios,
         sampleCount: args.sampleCount,
         reactionSeconds: args.reactionSeconds,
+        skippedLateScenarioCount,
       });
     });
   } else {
@@ -1192,6 +1446,8 @@ function main() {
       {
         来源: 'lab-public/race/scripts/{config,core,race-formulas,race}.js',
         检查点: args.checkpoints.join(', '),
+        '55+检查难度': [...LATE_GAME_DIFFICULTY_KEYS].join(', '),
+        神话强化档: args.mythicLevels.map((level) => `+${level}`).join(', '),
         样本数: args.sampleCount,
         候选保留数: args.topK,
         反应时间: `${args.reactionSeconds}s`,
@@ -1200,18 +1456,28 @@ function main() {
     ]);
 
     difficultyKeys.forEach((difficultyKey) => {
+      const difficultyCheckpoints = resolveDifficultyCheckpoints(difficultyKey, args.checkpoints);
+      if (difficultyCheckpoints.length === 0) {
+        console.log(
+          `\n=== ${raceData.DIFFICULTIES[difficultyKey].name} (${difficultyKey}) ===`
+        );
+        console.log(`- 已跳过：55 场以后只检测噩梦难度`);
+        return;
+      }
+
       const enumerated = enumerateDifficulty({
         raceData,
         difficultyKey,
-        checkpoints: args.checkpoints,
+        checkpoints: difficultyCheckpoints,
         topK: args.topK,
+        mythicLevels: args.mythicLevels,
       });
 
       const candidates = collectUniqueCandidates(enumerated).map((candidate) =>
         simulateCandidate({
           raceData,
           candidate,
-          checkpoints: args.checkpoints,
+          checkpoints: difficultyCheckpoints,
           sampleCount: args.sampleCount,
           seedPrefix: args.seed,
           reactionSeconds: args.reactionSeconds,
@@ -1227,7 +1493,7 @@ function main() {
         raceData,
         result: enumerated,
         diagnosis,
-        checkpoints: args.checkpoints,
+        checkpoints: difficultyCheckpoints,
       });
     });
   }
