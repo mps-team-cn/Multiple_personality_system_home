@@ -12,6 +12,7 @@ const RACE_GAME_SCRIPTS = [
   'parts.js',
   'storage.js',
   'main.js',
+  'gsafe.js',
 ];
 
 const raceGameEntryScript =
