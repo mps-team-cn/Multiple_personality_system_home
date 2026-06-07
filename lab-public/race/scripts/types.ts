@@ -14,6 +14,7 @@ export type RacePartStatKey = 'hp' | 'engine' | 'tire' | 'gearbox' | 'stability'
 
 export type MythicUpgradeLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 export type MythicUpgradeInputLevel = Exclude<MythicUpgradeLevel, 10>;
+export type MythicUpgradeTargetLevel = Exclude<MythicUpgradeLevel, 0>;
 
 export interface RacePart {
   id: number;
@@ -110,7 +111,10 @@ export interface MythicUpgradeConfig {
   maxLevel: 10;
   bonusPerLevel: number;
   statKeys: readonly Extract<RacePartStatKey, 'hp' | 'engine' | 'tire' | 'gearbox' | 'stability'>[];
-  successRates: Record<MythicUpgradeInputLevel, number>;
+  levelBonusRates: Record<MythicUpgradeTargetLevel, number>;
+  statWeights: Partial<Record<RacePartStatKey, number>>;
+  successRates: Record<MythicUpgradeTargetLevel, number>;
+  upgradeCost: Record<MythicUpgradeTargetLevel, number>;
 }
 
 export interface MythicUpgradeResultTelemetry {
@@ -132,18 +136,49 @@ export const DEFAULT_SETTINGS_CONTRACT = {
 
 export const MYTHIC_UPGRADE_CONTRACT = {
   maxLevel: 10,
-  bonusPerLevel: 0.025,
+  bonusPerLevel: 0.0335,
   statKeys: ['hp', 'engine', 'tire', 'gearbox', 'stability'],
+  levelBonusRates: {
+    1: 1,
+    2: 1,
+    3: 1,
+    4: 0.75,
+    5: 0.75,
+    6: 0.75,
+    7: 0.75,
+    8: 0.5,
+    9: 0.5,
+    10: 0.5,
+  },
+  statWeights: {
+    hp: 0.65,
+    engine: 0.75,
+    tire: 1.1,
+    gearbox: 1.15,
+    stability: 1.45,
+  },
   successRates: {
-    0: 1,
-    1: 0.95,
-    2: 0.9,
-    3: 0.82,
-    4: 0.74,
-    5: 0.65,
-    6: 0.55,
-    7: 0.45,
-    8: 0.35,
-    9: 0.25,
+    1: 1,
+    2: 1,
+    3: 0.9,
+    4: 0.8,
+    5: 0.7,
+    6: 0.6,
+    7: 0.5,
+    8: 0.4,
+    9: 0.32,
+    10: 0.25,
+  },
+  upgradeCost: {
+    1: 1200,
+    2: 1800,
+    3: 2600,
+    4: 3800,
+    5: 5600,
+    6: 7800,
+    7: 10500,
+    8: 13800,
+    9: 17800,
+    10: 22800,
   },
 } as const satisfies MythicUpgradeConfig;

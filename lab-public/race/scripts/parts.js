@@ -371,6 +371,7 @@ function upgradeMythicPart(partId) {
   const successRate = getMythicUpgradeSuccessRate(currentLevel);
   const success = Math.random() < successRate;
   gameState.cash -= cost;
+  unlockAchievementById('harukawa_cat_sticker', { source: 'mythicUpgradeAttempt' });
 
   if (success) {
     const nextLevel = currentLevel + 1;

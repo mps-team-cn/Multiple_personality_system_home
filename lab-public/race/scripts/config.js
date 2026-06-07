@@ -113,19 +113,50 @@ const PART_RARITY_WEIGHTS = {
 
 const SHOP_OWNED_PART_WEIGHT = 0.2;
 const MYTHIC_UPGRADE_MAX_LEVEL = 10;
-const MYTHIC_UPGRADE_BONUS_PER_LEVEL = 0.025;
+const MYTHIC_UPGRADE_BONUS_PER_LEVEL = 0.0335;
 const MYTHIC_UPGRADE_STAT_KEYS = ['hp', 'engine', 'tire', 'gearbox', 'stability'];
+const MYTHIC_UPGRADE_LEVEL_BONUS_RATES = {
+  1: 1,
+  2: 1,
+  3: 1,
+  4: 0.75,
+  5: 0.75,
+  6: 0.75,
+  7: 0.75,
+  8: 0.5,
+  9: 0.5,
+  10: 0.5,
+};
+const MYTHIC_STAT_WEIGHTS = {
+  hp: 0.65,
+  engine: 0.75,
+  tire: 1.1,
+  gearbox: 1.15,
+  stability: 1.45,
+};
 const MYTHIC_UPGRADE_SUCCESS_RATES = {
-  0: 1,
-  1: 0.95,
-  2: 0.9,
-  3: 0.82,
-  4: 0.74,
-  5: 0.65,
-  6: 0.55,
-  7: 0.45,
-  8: 0.35,
-  9: 0.25,
+  1: 1,
+  2: 1,
+  3: 0.9,
+  4: 0.8,
+  5: 0.7,
+  6: 0.6,
+  7: 0.5,
+  8: 0.4,
+  9: 0.32,
+  10: 0.25,
+};
+const MYTHIC_UPGRADE_COST = {
+  1: 1200,
+  2: 1800,
+  3: 2600,
+  4: 3800,
+  5: 5600,
+  6: 7800,
+  7: 10500,
+  8: 13800,
+  9: 17800,
+  10: 22800,
 };
 const OPPONENT_CHASE_START_RACE = 6;
 const OPPONENT_CHASE_RAMP_RACES = 14;
@@ -311,6 +342,14 @@ const ACHIEVEMENTS = [
     flavor: '神话件第一次留下了强化刻痕。',
   },
   {
+    id: 'harukawa_cat_sticker',
+    name: '晴川猫猫贴纸',
+    description: '外交官亲自贴上的猫猫贴纸，据说能让赛车看起来更容易被原谅。',
+    category: '彩蛋',
+    check: 'harukawaCatSticker',
+    flavor: '晴川：失败也没关系啦，至少车现在看起来比较可爱。',
+  },
+  {
     id: 'mythic_upgrade_ten',
     name: '十阶神装',
     description: '将任意一件神话装备强化到 +10。',
@@ -320,11 +359,11 @@ const ACHIEVEMENTS = [
   },
   {
     id: 'mythic_upgrade_resonance',
-    name: '全神话共鸣',
-    description: '全身神话装备全部强化到 +10。',
+    name: '全神话 +10',
+    description: '所有可强化神话部件都达到 +10。',
     category: '神话强化',
-    check: 'allEquippedMythicUpgradeMaxed',
-    flavor: '当前车体的每个槽位都开始发热。',
+    check: 'allMythicTemplatesUpgradeMaxed',
+    flavor: '车库里每一种神话部件都完成了终局调校。',
   },
   {
     id: 'normalWin',
@@ -456,6 +495,14 @@ const ACHIEVEMENTS = [
     hidden: true,
     check: 'brokeEntryAttempt',
     flavor: '报名费都凑不齐了，但梦想还是热的。',
+  },
+  {
+    id: 'lianlian_low_power_fuel_pack',
+    name: '脸脸低电量省油包',
+    description: '低电量驾驶专用补给包。跑不快没关系，能省一点是一点。',
+    category: '彩蛋',
+    check: 'lianlianLowPowerFuelPack',
+    flavor: '脸脸：没电了，先省着跑。',
   },
   {
     id: 'false_start_hot_tofu',

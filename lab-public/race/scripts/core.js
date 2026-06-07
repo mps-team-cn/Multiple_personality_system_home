@@ -121,17 +121,39 @@ function formatPartNameWithUpgrade(part) {
 
 function getMythicUpgradeCost(part, level) {
   const currentLevel = normalizeMythicUpgradeLevel(level);
+  const targetLevel = normalizeMythicUpgradeLevel(currentLevel + 1);
+  const configuredCost = MYTHIC_UPGRADE_COST[targetLevel];
+  if (Number.isFinite(configuredCost)) {
+    return configuredCost;
+  }
+
   const baseCost = Math.max(1800, Math.round((Number(part && part.price) || 0) * 0.4));
   return Math.round(baseCost * (1 + currentLevel * 0.45));
 }
 
 function getMythicUpgradeSuccessRate(level) {
   const currentLevel = normalizeMythicUpgradeLevel(level);
-  return MYTHIC_UPGRADE_SUCCESS_RATES[currentLevel] ?? 0.25;
+  const targetLevel = normalizeMythicUpgradeLevel(currentLevel + 1);
+  return MYTHIC_UPGRADE_SUCCESS_RATES[targetLevel] ?? 0.25;
 }
 
 function formatMythicUpgradeSuccessRate(level) {
   return `${Math.round(getMythicUpgradeSuccessRate(level) * 100)}%`;
+}
+
+function getMythicUpgradeEffectiveLevel(level) {
+  const normalizedLevel = normalizeMythicUpgradeLevel(level);
+  let effectiveLevel = 0;
+
+  for (let targetLevel = 1; targetLevel <= normalizedLevel; targetLevel += 1) {
+    effectiveLevel += MYTHIC_UPGRADE_LEVEL_BONUS_RATES[targetLevel] ?? 0.5;
+  }
+
+  return effectiveLevel;
+}
+
+function getMythicStatWeight(key) {
+  return MYTHIC_STAT_WEIGHTS[key] ?? 1;
 }
 
 function applyMythicUpgradeBonus(part, upgradeLevel) {
@@ -140,7 +162,7 @@ function applyMythicUpgradeBonus(part, upgradeLevel) {
     return part;
   }
 
-  const multiplier = 1 + level * MYTHIC_UPGRADE_BONUS_PER_LEVEL;
+  const effectiveLevel = getMythicUpgradeEffectiveLevel(level);
   const upgraded = {
     ...part,
     changes: { ...(part.changes || {}) },
@@ -149,6 +171,8 @@ function applyMythicUpgradeBonus(part, upgradeLevel) {
   MYTHIC_UPGRADE_STAT_KEYS.forEach((key) => {
     const value = Number(upgraded.changes[key]);
     if (Number.isFinite(value) && value > 0) {
+      const multiplier =
+        1 + effectiveLevel * MYTHIC_UPGRADE_BONUS_PER_LEVEL * getMythicStatWeight(key);
       upgraded.changes[key] = Math.round(value * multiplier);
     }
   });
@@ -734,11 +758,21 @@ function hasAnyMythicUpgradeAtLeast(level) {
   );
 }
 
-function isAllEquippedMythicUpgradeMaxed() {
-  return EQUIPMENT_SLOTS.every((type) => {
-    const part = getEquippedPart(type);
-    return isMythicPart(part) && getMythicUpgradeLevel(part.id) >= MYTHIC_UPGRADE_MAX_LEVEL;
-  });
+function isAllMythicTemplatesUpgradeMaxed() {
+  const mythicTemplateIds = PART_POOL.filter(isMythicPart).map((part) => part.templateId);
+  if (mythicTemplateIds.length === 0) {
+    return false;
+  }
+
+  const maxedTemplateIds = new Set(
+    gameState.inventory
+      .filter(
+        (part) => isMythicPart(part) && getMythicUpgradeLevel(part.id) >= MYTHIC_UPGRADE_MAX_LEVEL
+      )
+      .map((part) => getPartTemplateId(part))
+  );
+
+  return mythicTemplateIds.every((templateId) => maxedTemplateIds.has(templateId));
 }
 
 function formatDateTime(value) {
@@ -1516,8 +1550,7 @@ function updateButtons() {
   inventoryButtons.forEach((button) => {
     const part = getPartById(Number(button.dataset.partId));
     const equipped = part && gameState.equippedParts[part.type] === part.id;
-    const mythicUpgradeMaxed =
-      part && getMythicUpgradeLevel(part.id) >= MYTHIC_UPGRADE_MAX_LEVEL;
+    const mythicUpgradeMaxed = part && getMythicUpgradeLevel(part.id) >= MYTHIC_UPGRADE_MAX_LEVEL;
     button.disabled =
       !canManageTuning() ||
       !part ||

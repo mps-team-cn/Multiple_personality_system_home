@@ -183,10 +183,12 @@ function checkAchievementCondition(achievement) {
       return stats.hasFilledAllSlots || isAllSlotsFilled();
     case 'firstMythicUpgrade':
       return hasAnyMythicUpgradeAtLeast(1);
+    case 'harukawaCatSticker':
+      return false;
     case 'anyMythicUpgradeMaxed':
       return hasAnyMythicUpgradeAtLeast(MYTHIC_UPGRADE_MAX_LEVEL);
-    case 'allEquippedMythicUpgradeMaxed':
-      return isAllEquippedMythicUpgradeMaxed();
+    case 'allMythicTemplatesUpgradeMaxed':
+      return isAllMythicTemplatesUpgradeMaxed();
     case 'normalWin':
       return (stats.winsByDifficulty.normal || 0) >= 1;
     case 'hardWin':
@@ -218,6 +220,8 @@ function checkAchievementCondition(achievement) {
     case 'xiaoyuSponsorWin':
       return stats.wonWithSpecialParts.includes('stability_xiaoyu_sponsor');
     case 'brokeEntryAttempt':
+      return false;
+    case 'lianlianLowPowerFuelPack':
       return false;
     case 'falseStartHotTofu':
       return stats.falseStartCount >= 1;
@@ -258,10 +262,7 @@ function checkAchievementCondition(achievement) {
     case 'nightmareGraduate':
       return (stats.winsByDifficulty.nightmare || 0) >= 1;
     case 'tenSecondPlaces':
-      return (
-        stats.secondPlaceStreak >= 10 ||
-        Boolean(stats.hasWonAfterSecondPlaceStreak)
-      );
+      return stats.secondPlaceStreak >= 10 || Boolean(stats.hasWonAfterSecondPlaceStreak);
     case 'comebackAfterSecondPlaces':
       return Boolean(stats.hasWonAfterSecondPlaceStreak);
     default:

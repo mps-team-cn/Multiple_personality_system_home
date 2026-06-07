@@ -19,6 +19,8 @@ const DEFAULT_REACTION_SECONDS = 0.38;
 const DEFAULT_SAMPLE_COUNT = 320;
 const DEFAULT_TOP_K = 24;
 const DEFAULT_MYTHIC_LEVELS = [0];
+const STARTING_CASH = 1500;
+const CHECKPOINT_BUDGET_OVERRUN_MULTIPLIER = 1.2;
 const LATE_GAME_RACE_COUNT = 55;
 const LATE_GAME_DIFFICULTY_KEYS = new Set(['nightmare']);
 const DEFAULT_FOCUS = {
@@ -306,7 +308,10 @@ globalThis.__raceBalanceData = {
   FINISH,
   LOOT_POOLS,
   MYTHIC_UPGRADE_BONUS_PER_LEVEL,
+  MYTHIC_UPGRADE_COST,
+  MYTHIC_UPGRADE_LEVEL_BONUS_RATES,
   MYTHIC_UPGRADE_MAX_LEVEL,
+  MYTHIC_STAT_WEIGHTS,
   MYTHIC_UPGRADE_STAT_KEYS,
   OPPONENT_CHASE_CAP,
   OPPONENT_CHASE_RAMP_RACES,
@@ -336,6 +341,9 @@ function validateSourceTexts(sourceText) {
     'const MYTHIC_UPGRADE_MAX_LEVEL',
     'const MYTHIC_UPGRADE_BONUS_PER_LEVEL',
     'const MYTHIC_UPGRADE_STAT_KEYS',
+    'const MYTHIC_UPGRADE_LEVEL_BONUS_RATES',
+    'const MYTHIC_STAT_WEIGHTS',
+    'const MYTHIC_UPGRADE_COST',
   ];
   const requiredCoreTokens = [
     'function getDifficultyEntryFee',
@@ -387,6 +395,12 @@ function isMythicPart(part) {
 
 function getMythicUpgradeCost(raceData, part, level) {
   const currentLevel = normalizeMythicUpgradeLevel(raceData, level);
+  const targetLevel = normalizeMythicUpgradeLevel(raceData, currentLevel + 1);
+  const configuredCost = raceData.MYTHIC_UPGRADE_COST[targetLevel];
+  if (Number.isFinite(configuredCost)) {
+    return configuredCost;
+  }
+
   const baseCost = Math.max(1800, Math.round((Number(part && part.price) || 0) * 0.4));
   return Math.round(baseCost * (1 + currentLevel * 0.45));
 }
@@ -402,13 +416,28 @@ function getTotalMythicUpgradeCost(raceData, part, targetLevel) {
   return total;
 }
 
+function getMythicUpgradeEffectiveLevel(raceData, level) {
+  const normalizedLevel = normalizeMythicUpgradeLevel(raceData, level);
+  let effectiveLevel = 0;
+
+  for (let targetLevel = 1; targetLevel <= normalizedLevel; targetLevel += 1) {
+    effectiveLevel += raceData.MYTHIC_UPGRADE_LEVEL_BONUS_RATES[targetLevel] ?? 0.5;
+  }
+
+  return effectiveLevel;
+}
+
+function getMythicStatWeight(raceData, key) {
+  return raceData.MYTHIC_STAT_WEIGHTS[key] ?? 1;
+}
+
 function applyMythicUpgradeBonus(raceData, part, upgradeLevel) {
   const level = normalizeMythicUpgradeLevel(raceData, upgradeLevel);
   if (!isMythicPart(part) || level <= 0) {
     return part;
   }
 
-  const multiplier = 1 + level * raceData.MYTHIC_UPGRADE_BONUS_PER_LEVEL;
+  const effectiveLevel = getMythicUpgradeEffectiveLevel(raceData, level);
   const upgraded = {
     ...part,
     changes: { ...(part.changes || {}) },
@@ -417,6 +446,11 @@ function applyMythicUpgradeBonus(raceData, part, upgradeLevel) {
   raceData.MYTHIC_UPGRADE_STAT_KEYS.forEach((key) => {
     const value = Number(upgraded.changes[key]);
     if (Number.isFinite(value) && value > 0) {
+      const multiplier =
+        1 +
+        effectiveLevel *
+          raceData.MYTHIC_UPGRADE_BONUS_PER_LEVEL *
+          getMythicStatWeight(raceData, key);
       upgraded.changes[key] = Math.round(value * multiplier);
     }
   });
@@ -497,6 +531,20 @@ function computeEntryFee(raceData, difficultyKey) {
   const multiplier =
     difficulty && difficulty.entryFeeMultiplier ? difficulty.entryFeeMultiplier : 1;
   return Math.round((raceData.ENTRY_FEE * multiplier) / 10) * 10;
+}
+
+function estimateCheckpointBudget(raceData, difficultyKey, checkpoint) {
+  const difficulty = raceData.DIFFICULTIES[difficultyKey] || {};
+  const raceCount = Math.max(0, Math.floor(Number(checkpoint) || 0));
+  const rewardMultiplier = difficulty.rewardMultiplier || 1;
+  const firstPlacePrize = Math.floor((raceData.PRIZES[0] || 0) * rewardMultiplier);
+  const netGainPerRace = Math.max(0, firstPlacePrize - computeEntryFee(raceData, difficultyKey));
+
+  return STARTING_CASH + raceCount * netGainPerRace;
+}
+
+function isCostWithinCheckpointBudget(totalCost, checkpointBudget) {
+  return totalCost <= checkpointBudget * CHECKPOINT_BUDGET_OVERRUN_MULTIPLIER;
 }
 
 function computePlayerStats(raceData, totals) {
@@ -666,17 +714,34 @@ function summarizeStatProfile(raceData, stats) {
     weight: Math.max(0, raceData.BASE_PLAYER_STATS.weight - stats.weight),
   };
 
-  const entries = Object.entries(positives);
-  const total = entries.reduce((sum, [, value]) => sum + value, 0);
-  const [dominantStat, dominantValue] = entries.reduce(
+  const contributionWeights = {
+    engine: 0.019,
+    tire: 0.02,
+    gearbox: 0.014,
+    stability: 0.012,
+    hp: 0.0026,
+    weight: 0.0012,
+  };
+  const contributions = Object.fromEntries(
+    Object.entries(positives).map(([key, value]) => [key, value * (contributionWeights[key] || 1)])
+  );
+  const contributionEntries = Object.entries(contributions);
+  const totalContribution = contributionEntries.reduce((sum, [, value]) => sum + value, 0);
+  const [dominantStat, dominantValue] = contributionEntries.reduce(
     (best, current) => (current[1] > best[1] ? current : best),
     ['engine', 0]
   );
 
   return {
     positives,
+    contributions,
     dominantStat,
-    dominantShare: total > 0 ? dominantValue / total : 0,
+    dominantShare: totalContribution > 0 ? dominantValue / totalContribution : 0,
+    handlingContribution:
+      (contributions.tire || 0) +
+      (contributions.gearbox || 0) +
+      (contributions.stability || 0) +
+      (contributions.weight || 0),
   };
 }
 
@@ -999,7 +1064,9 @@ function resolveFocusCheckpoints(difficultyKey, checkpoints) {
   const lateCheckpoints = LATE_GAME_DIFFICULTY_KEYS.has(difficultyKey)
     ? checkpoints.filter((checkpoint) => checkpoint >= LATE_GAME_RACE_COUNT)
     : [];
-  const merged = [...new Set([...filtered, ...lateCheckpoints])].sort((left, right) => left - right);
+  const merged = [...new Set([...filtered, ...lateCheckpoints])].sort(
+    (left, right) => left - right
+  );
 
   return merged.length > 0 ? merged : checkpoints;
 }
@@ -1008,6 +1075,12 @@ function enumerateDifficulty({ raceData, difficultyKey, checkpoints, topK, mythi
   const focusCheckpoints = resolveFocusCheckpoints(difficultyKey, checkpoints);
   const slotOptions = buildDifficultyOptions(raceData, difficultyKey, mythicLevels);
   const selectedOptions = new Array(slotOptions.length);
+  const checkpointBudgets = Object.fromEntries(
+    checkpoints.map((checkpoint) => [
+      checkpoint,
+      estimateCheckpointBudget(raceData, difficultyKey, checkpoint),
+    ])
+  );
   const totals = {
     engine: raceData.BASE_PLAYER_STATS.engine,
     tire: raceData.BASE_PLAYER_STATS.tire,
@@ -1025,6 +1098,9 @@ function enumerateDifficulty({ raceData, difficultyKey, checkpoints, topK, mythi
     stablest: [],
     value: [],
     budget: [],
+    reachableStrongestByCheckpoint: Object.fromEntries(
+      checkpoints.map((checkpoint) => [checkpoint, []])
+    ),
     emptyConfig: null,
   };
 
@@ -1062,6 +1138,16 @@ function enumerateDifficulty({ raceData, difficultyKey, checkpoints, topK, mythi
       maybePushTop(tracker.strongest, topK, strongestScore, snapshot);
       maybePushTop(tracker.stablest, topK, stableScore, snapshot);
       maybePushTop(tracker.value, topK, valueScore, snapshot);
+      checkpoints.forEach((checkpoint) => {
+        if (isCostWithinCheckpointBudget(snapshot.totalCost, checkpointBudgets[checkpoint])) {
+          maybePushTop(
+            tracker.reachableStrongestByCheckpoint[checkpoint],
+            topK,
+            snapshot.proxyMargins[checkpoint].gap,
+            snapshot
+          );
+        }
+      });
       maybePushBudget(tracker.budget, topK, snapshot);
       return;
     }
@@ -1091,6 +1177,7 @@ function enumerateDifficulty({ raceData, difficultyKey, checkpoints, topK, mythi
   return {
     difficultyKey,
     focusCheckpoints,
+    checkpointBudgets,
     slotOptionCounts: Object.fromEntries(
       raceData.EQUIPMENT_SLOTS.map((slot, index) => [slot, slotOptions[index].length])
     ),
@@ -1105,6 +1192,9 @@ function collectUniqueCandidates(result) {
     ...result.strongest.map((item) => item.snapshot),
     ...result.stablest.map((item) => item.snapshot),
     ...result.value.map((item) => item.snapshot),
+    ...Object.values(result.reachableStrongestByCheckpoint || {}).flatMap((items) =>
+      items.map((item) => item.snapshot)
+    ),
     ...result.budget,
     result.emptyConfig,
   ]
@@ -1144,12 +1234,28 @@ function buildDifficultyDiagnosis({ result, simulatedCandidates }) {
     focusCheckpoints,
     (candidate, focus) => getFocusStats(candidate, focus).averageWinRate
   );
+  const balancedStablestPool = simulatedCandidates.filter((candidate) => {
+    if (strongest && candidate.configKey === strongest.configKey) {
+      return false;
+    }
+
+    const focusStats = getFocusStats(candidate, focusCheckpoints);
+    return (
+      candidate.profile.dominantShare <= 0.55 && focusStats.minimumWinRate >= target.stableWinRate
+    );
+  });
   const stablest = pickBestCandidate(
-    simulatedCandidates,
+    balancedStablestPool.length > 0 ? balancedStablestPool : simulatedCandidates,
     focusCheckpoints,
-    (candidate, focus) =>
-      getFocusStats(candidate, focus).minimumWinRate * 100 -
-      getFocusStats(candidate, focus).averageRank
+    (candidate, focus) => {
+      const focusStats = getFocusStats(candidate, focus);
+      return (
+        focusStats.minimumWinRate * 100 -
+        focusStats.averageRank +
+        candidate.profile.handlingContribution * 4 -
+        candidate.profile.dominantShare * 3
+      );
+    }
   );
   const valuePool = simulatedCandidates.filter((candidate) => {
     const focusStats = getFocusStats(candidate, focusCheckpoints);
@@ -1187,11 +1293,21 @@ function buildDifficultyDiagnosis({ result, simulatedCandidates }) {
   const valueFocus = value ? getFocusStats(value, focusCheckpoints) : null;
   const lateCheckpoint = Math.max(...focusCheckpoints);
   const lateStrongestRate = strongest ? strongest.simulations[lateCheckpoint].winRate : 0;
-  const earlyCheckpoint = Math.min(...DEFAULT_CHECKPOINTS);
-  const earlyStrongestRate =
-    strongest && strongest.simulations[earlyCheckpoint]
-      ? strongest.simulations[earlyCheckpoint].winRate
-      : 0;
+  const earlyCheckpoint = Math.min(...Object.keys(result.checkpointBudgets).map(Number));
+  const earlyBudget = result.checkpointBudgets[earlyCheckpoint] || STARTING_CASH;
+  const earlyReachableCandidates = simulatedCandidates.filter(
+    (candidate) =>
+      candidate.simulations[earlyCheckpoint] &&
+      isCostWithinCheckpointBudget(candidate.totalCost, earlyBudget)
+  );
+  const earlyReachableStrongest = pickBestCandidate(
+    earlyReachableCandidates,
+    [earlyCheckpoint],
+    (candidate) => candidate.simulations[earlyCheckpoint].winRate
+  );
+  const earlyReachableStrongestRate = earlyReachableStrongest
+    ? earlyReachableStrongest.simulations[earlyCheckpoint].winRate
+    : 0;
   const obviousBrailsThreshold =
     result.difficultyKey === 'nightmare' ? 0.68 : result.difficultyKey === 'hard' ? 0.78 : 0.9;
   const brainless =
@@ -1205,6 +1321,10 @@ function buildDifficultyDiagnosis({ result, simulatedCandidates }) {
     stablest,
     value: value || strongest || stablest || null,
     budget,
+    earlyReachableStrongest,
+    earlyCheckpoint,
+    earlyBudget,
+    earlyReachableStrongestRate,
     emptyStats,
     strongestFocus,
     stablestFocus,
@@ -1212,11 +1332,12 @@ function buildDifficultyDiagnosis({ result, simulatedCandidates }) {
     findings: {
       brainless,
       impossibleGap,
-      nightmareEarlyOverrun: result.difficultyKey === 'nightmare' && earlyStrongestRate >= 0.7,
+      nightmareEarlyOverrun:
+        result.difficultyKey === 'nightmare' && earlyReachableStrongestRate >= 0.7,
       singleStatSmash:
         Boolean(strongest) &&
         ['hard', 'expert', 'nightmare'].includes(result.difficultyKey) &&
-        strongest.profile.dominantShare >= 0.48 &&
+        strongest.profile.dominantShare >= 0.55 &&
         strongestFocus &&
         strongestFocus.averageWinRate >= 0.55,
     },
@@ -1240,6 +1361,10 @@ function printDifficultyReport({ raceData, result, diagnosis, checkpoints }) {
   console.table(
     checkpoints.map((checkpoint) => ({
       检查点: checkpoint,
+      理论资金上限: result.checkpointBudgets[checkpoint],
+      明显超额阈值: Math.round(
+        result.checkpointBudgets[checkpoint] * CHECKPOINT_BUDGET_OVERRUN_MULTIPLIER
+      ),
       代理过线组合占比: formatPercent(
         result.checkpointProxyPassCount[checkpoint] / result.comboCount
       ),
@@ -1308,7 +1433,11 @@ function printDifficultyReport({ raceData, result, diagnosis, checkpoints }) {
   }
 
   if (diagnosis.findings.nightmareEarlyOverrun) {
-    notes.push('噩梦难度前期过强：顶配在早期检查点已接近轻松碾压');
+    notes.push(
+      `噩梦难度前期过强：预算内配置在 ${diagnosis.earlyCheckpoint} 场检查点胜率 ${formatPercent(
+        diagnosis.earlyReachableStrongestRate
+      )}`
+    );
   }
 
   if (diagnosis.findings.singleStatSmash) {
@@ -1458,9 +1587,7 @@ function main() {
     difficultyKeys.forEach((difficultyKey) => {
       const difficultyCheckpoints = resolveDifficultyCheckpoints(difficultyKey, args.checkpoints);
       if (difficultyCheckpoints.length === 0) {
-        console.log(
-          `\n=== ${raceData.DIFFICULTIES[difficultyKey].name} (${difficultyKey}) ===`
-        );
+        console.log(`\n=== ${raceData.DIFFICULTIES[difficultyKey].name} (${difficultyKey}) ===`);
         console.log(`- 已跳过：55 场以后只检测噩梦难度`);
         return;
       }

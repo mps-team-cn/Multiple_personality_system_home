@@ -330,9 +330,12 @@ function startPracticeRace() {
 
   gameState.raceControl = 'manual';
   gameState.aiAssist = createDefaultAiAssistState();
-  registerRace({ raceType: 'practice' });
+  const started = registerRace({ raceType: 'practice' }) !== false;
+  if (started) {
+    unlockAchievementById('lianlian_low_power_fuel_pack', { source: 'practiceRecovery' });
+  }
   updateStats();
-  return true;
+  return started;
 }
 
 function showPracticeEntryNotice() {
