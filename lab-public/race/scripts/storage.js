@@ -14,7 +14,7 @@ function blockStorageWrites(reason) {
 }
 
 // 返回结构化状态，调用方根据 missing/invalid/access_error 决定是否阻止自动覆盖旧存档。
-function readStoredGameData() {
+function readStoredGameData(options = {}) {
   let rawData = null;
   try {
     rawData = localStorage.getItem(STORAGE_KEY);
@@ -47,14 +47,25 @@ function readStoredGameData() {
     };
   }
 
-  // GSafe 存档校验：检测 localStorage 篡改
+  // GSafe 存档校验：失败时提示旧版本/本地损坏，不封禁。
   if (typeof gsafeVerifyChecksum === 'function') {
     try {
       if (parsedData._gsafeChecksum !== undefined) {
         if (!gsafeVerifyChecksum(parsedData)) {
+          if (typeof gsafeFlagSaveIssue === 'function') {
+            gsafeFlagSaveIssue('save checksum mismatch');
+          }
+          if (options.allowChecksumMismatch) {
+            return {
+              status: 'ok',
+              saveData,
+              repairedFromChecksumMismatch: true,
+            };
+          }
           return {
-            status: 'invalid',
-            message: '存档数据校验失败，可能被篡改。',
+            status: 'checksum_mismatch',
+            message: '存档校验失败，可能是旧版本或本地数据损坏。',
+            saveData,
           };
         }
       }
@@ -67,6 +78,41 @@ function readStoredGameData() {
   };
 }
 
+function repairLoadedSaveData(saveData) {
+  applyLoadedGameState(saveData);
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(createSaveData()));
+    clearStorageWriteBlock();
+    addLog('已尝试修复存档校验信息，并重新写入本地存档。');
+    if (typeof openNoticeModal === 'function') {
+      openNoticeModal('修复完成', '存档已重新保存。若仍反复出现校验失败，请下载本地数据后清理本地数据。');
+    }
+  } catch (error) {
+    blockStorageWrites('浏览器拒绝写入修复后的存档。');
+    addLog('修复失败：浏览器拒绝写入 localStorage。');
+  }
+}
+
+function openSaveChecksumRecoveryModal(saveData) {
+  const message =
+    '存档校验失败，可能是旧版本或本地数据损坏。\n\n你可以先尝试修复；如果修复后仍无法读取，再清理本地数据。';
+
+  if (typeof openNoticeModal === 'function') {
+    openNoticeModal('存档校验失败', message, {
+      showCancel: true,
+      cancelText: '清理本地数据',
+      confirmText: '尝试修复',
+      onConfirm: () => repairLoadedSaveData(saveData),
+      onCancel: performClearAllRaceLocalData,
+    });
+    return;
+  }
+
+  if (window.confirm(message + '\n\n点击“确定”尝试修复，点击“取消”不做处理。')) {
+    repairLoadedSaveData(saveData);
+  }
+}
+
 function applyLoadedGameState(saveData) {
   applyPersistentState(saveData);
   clearStorageWriteBlock();
@@ -74,6 +120,65 @@ function applyLoadedGameState(saveData) {
     checkAchievements({ source: 'loadMigration', silent: true });
   }
   refreshAfterPersistentChange();
+}
+
+function downloadJsonFile(filename, data) {
+  const payload = JSON.stringify(data, null, 2);
+  const blob = new Blob([payload], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function readRaceLocalStorageSnapshot() {
+  const snapshot = {};
+  getRaceLocalStorageKeys().forEach((key) => {
+    snapshot[key] = localStorage.getItem(key);
+  });
+  return snapshot;
+}
+
+async function collectLocalDataExport() {
+  const gsafeState =
+    typeof gsafeGetState === 'function'
+      ? gsafeGetState()
+      : null;
+  const gsafeEvidence =
+    typeof gsafeReadEvidenceEntries === 'function'
+      ? await gsafeReadEvidenceEntries()
+      : [];
+
+  return {
+    exportedAt: new Date().toISOString(),
+    gameVersion: typeof GAME_VERSION === 'string' ? GAME_VERSION : null,
+    storageKey: STORAGE_KEY,
+    localStorage: readRaceLocalStorageSnapshot(),
+    currentSaveData: createSaveData(),
+    gsafe: {
+      state: gsafeState,
+      evidenceTable: {
+        database: 'mps-race-gsafe',
+        store: 'evidence',
+        records: gsafeEvidence,
+      },
+    },
+  };
+}
+
+function downloadLocalData() {
+  collectLocalDataExport()
+    .then((data) => {
+      downloadJsonFile('race-local-data-' + Date.now() + '.json', data);
+      addLog('本地数据已导出为 JSON 文件。');
+    })
+    .catch(() => {
+      addLog('导出本地数据失败：浏览器拒绝读取本地数据。');
+    });
 }
 
 // 手动保存禁止发生在比赛锁定阶段，避免半场状态被写入存档。
@@ -111,6 +216,12 @@ function loadGame() {
     addLog(`读取失败：${result.message}`);
     return;
   }
+  if (result.status === 'checksum_mismatch') {
+    blockStorageWrites(result.message);
+    addLog(`读取失败：${result.message}`);
+    openSaveChecksumRecoveryModal(result.saveData);
+    return;
+  }
   if (result.status !== 'ok') {
     blockStorageWrites(result.message);
     addLog(`读取失败：${result.message}`);
@@ -130,7 +241,7 @@ function autoLoadGameOnInit() {
     return { status: 'loaded' };
   }
 
-  if (result.status === 'invalid') {
+  if (result.status === 'invalid' || result.status === 'checksum_mismatch') {
     blockStorageWrites(result.message);
     return result;
   }
@@ -188,6 +299,9 @@ function resetPersistentState(options = {}) {
 function performRestartGame() {
   clearRaceTimers();
   clearStorageWriteBlock();
+  if (typeof gsafeResetSession === 'function') {
+    gsafeResetSession();
+  }
   resetPersistentState({ preserveAchievements: true });
   let saveFailed = false;
   try {

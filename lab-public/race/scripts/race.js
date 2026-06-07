@@ -449,6 +449,9 @@ function registerRace(options = {}) {
     resetRaceControlState();
   }
   gameState.activeRaceType = raceType;
+  if (typeof gsafeBeginRace === 'function') {
+    gsafeBeginRace({ raceType, difficultyKey: getDifficultyKey() });
+  }
   gameState.cash -= entryFee;
   gameState.reactionTime = null;
   gameState.opponentReactionTime = rollOpponentReactionTime(getDifficultyKey());
@@ -724,7 +727,14 @@ function startPlayerCar(options = {}) {
     gameState.lastReactionTime = manualReactionTime;
     gameState.lastManualReactionTime = manualReactionTime;
     gameState.lastReactionControl = 'manual';
-    updateBestReactionRecord(manualReactionTime);
+    if (typeof gsafeRecordManualReaction === 'function') {
+      gsafeRecordManualReaction(manualReactionTime);
+    }
+    if (!(typeof gsafeIsCurrentRaceInvalid === 'function' && gsafeIsCurrentRaceInvalid())) {
+      updateBestReactionRecord(manualReactionTime);
+    } else {
+      addLog('GSafe：本场反应记录不计入最快纪录。');
+    }
     addLog(`你起步反应时间：${reactionSeconds.toFixed(3)} 秒`);
     if (reactionSeconds < 0.25) {
       addLog('无违规，起步完美！');
@@ -835,6 +845,8 @@ function completeRace() {
     difficultyKey: getDifficultyKey(),
     raceType: practiceRace ? 'practice' : 'standard',
   };
+  const gsafeInvalidRace =
+    typeof gsafeIsCurrentRaceInvalid === 'function' && gsafeIsCurrentRaceInvalid();
 
   gameState.cash += prize;
   gameState.lastRank = practiceRace ? `练习第 ${playerRank} 名` : `第 ${playerRank} 名`;
@@ -850,63 +862,70 @@ function completeRace() {
     gameState.stats.practiceRaces = (gameState.stats.practiceRaces || 0) + 1;
   } else {
     gameState.raceCount += 1;
-    updateWinStreak(playerRank, finishedRace);
-    updateManualDifficultyWinStreak(playerRank, finishedRace);
-    gameState.stats.falseStartStreak = 0;
-    const secondPlaceStreakBeforeRace = gameState.stats.secondPlaceStreak || 0;
-    if (isManualRace(finishedRace) && playerRank === 1 && secondPlaceStreakBeforeRace >= 10) {
-      gameState.stats.hasWonAfterSecondPlaceStreak = true;
-    }
-    if (isManualRace(finishedRace)) {
-      updateManualRankStreak(playerRank, finishedRace);
-    }
-    gameState.stats.totalRaces += 1;
-    gameState.stats.hasFinishedLast =
-      gameState.stats.hasFinishedLast || playerRank === ranked.length;
-    gameState.stats.hasLowCashAfterRace =
-      gameState.stats.hasLowCashAfterRace || gameState.cash < 100;
-    if (playerRank === 1) {
-      const difficultyKey = finishedRace.difficultyKey;
-      const equippedTemplateIds = EQUIPMENT_SLOTS.map((type) => getEquippedPart(type))
-        .filter(Boolean)
-        .map((part) => getPartTemplateId(part));
-      const wonWithBuildAchievements =
-        typeof getWinningAchievementTagsFromCurrentBuild === 'function'
-          ? getWinningAchievementTagsFromCurrentBuild()
-          : [];
-
-      gameState.currentLoseStreak = 0;
-      gameState.stats.totalWins += 1;
-      gameState.stats.winsByDifficulty[difficultyKey] += 1;
-      if (isNightmareDifficulty(difficultyKey)) {
-        if (
-          isManualRace(finishedRace) &&
-          Number.isFinite(gameState.lastManualReactionTime) &&
-          gameState.lastManualReactionTime >= NIGHTMARE_SLOW_REACTION_SECONDS
-        ) {
-          gameState.stats.hasNightmareSlowReactionWin = true;
-        }
-        if (typeof getNightmareWinningAchievementTagsFromCurrentBuild === 'function') {
-          markNightmareBuildAchievementFlags(getNightmareWinningAchievementTagsFromCurrentBuild());
-        }
-      }
-      wonWithBuildAchievements.forEach((achievementId) => {
-        if (!gameState.stats.wonWithBuildAchievements.includes(achievementId)) {
-          gameState.stats.wonWithBuildAchievements.push(achievementId);
-        }
-      });
-
-      ['gearbox_xue_wrench', 'stability_xiaoyu_sponsor'].forEach((templateId) => {
-        if (
-          equippedTemplateIds.includes(templateId) &&
-          !gameState.stats.wonWithSpecialParts.includes(templateId)
-        ) {
-          gameState.stats.wonWithSpecialParts.push(templateId);
-        }
-      });
+    if (gsafeInvalidRace) {
+      gameState.currentWinStreak = 0;
+      gameState.manualRankStreak = createDefaultManualRankStreak();
+      gameState.manualDifficultyWinStreak = createDefaultManualDifficultyWinStreak();
+      addLog('GSafe：本局成绩异常，未计入正式统计、连胜和成就。');
     } else {
-      gameState.currentLoseStreak += 1;
-      gameState.stats.totalLosses += 1;
+      updateWinStreak(playerRank, finishedRace);
+      updateManualDifficultyWinStreak(playerRank, finishedRace);
+      gameState.stats.falseStartStreak = 0;
+      const secondPlaceStreakBeforeRace = gameState.stats.secondPlaceStreak || 0;
+      if (isManualRace(finishedRace) && playerRank === 1 && secondPlaceStreakBeforeRace >= 10) {
+        gameState.stats.hasWonAfterSecondPlaceStreak = true;
+      }
+      if (isManualRace(finishedRace)) {
+        updateManualRankStreak(playerRank, finishedRace);
+      }
+      gameState.stats.totalRaces += 1;
+      gameState.stats.hasFinishedLast =
+        gameState.stats.hasFinishedLast || playerRank === ranked.length;
+      gameState.stats.hasLowCashAfterRace =
+        gameState.stats.hasLowCashAfterRace || gameState.cash < 100;
+      if (playerRank === 1) {
+        const difficultyKey = finishedRace.difficultyKey;
+        const equippedTemplateIds = EQUIPMENT_SLOTS.map((type) => getEquippedPart(type))
+          .filter(Boolean)
+          .map((part) => getPartTemplateId(part));
+        const wonWithBuildAchievements =
+          typeof getWinningAchievementTagsFromCurrentBuild === 'function'
+            ? getWinningAchievementTagsFromCurrentBuild()
+            : [];
+
+        gameState.currentLoseStreak = 0;
+        gameState.stats.totalWins += 1;
+        gameState.stats.winsByDifficulty[difficultyKey] += 1;
+        if (isNightmareDifficulty(difficultyKey)) {
+          if (
+            isManualRace(finishedRace) &&
+            Number.isFinite(gameState.lastManualReactionTime) &&
+            gameState.lastManualReactionTime >= NIGHTMARE_SLOW_REACTION_SECONDS
+          ) {
+            gameState.stats.hasNightmareSlowReactionWin = true;
+          }
+          if (typeof getNightmareWinningAchievementTagsFromCurrentBuild === 'function') {
+            markNightmareBuildAchievementFlags(getNightmareWinningAchievementTagsFromCurrentBuild());
+          }
+        }
+        wonWithBuildAchievements.forEach((achievementId) => {
+          if (!gameState.stats.wonWithBuildAchievements.includes(achievementId)) {
+            gameState.stats.wonWithBuildAchievements.push(achievementId);
+          }
+        });
+
+        ['gearbox_xue_wrench', 'stability_xiaoyu_sponsor'].forEach((templateId) => {
+          if (
+            equippedTemplateIds.includes(templateId) &&
+            !gameState.stats.wonWithSpecialParts.includes(templateId)
+          ) {
+            gameState.stats.wonWithSpecialParts.push(templateId);
+          }
+        });
+      } else {
+        gameState.currentLoseStreak += 1;
+        gameState.stats.totalLosses += 1;
+      }
     }
   }
   syncProgressStats();
@@ -932,7 +951,7 @@ function completeRace() {
   if (practiceRace && gameState.cash >= getMinEntryFee()) {
     showPracticeRecoveryNotice();
   }
-  if (!practiceRace && typeof checkAchievements === 'function') {
+  if (!practiceRace && !gsafeInvalidRace && typeof checkAchievements === 'function') {
     checkAchievements({ source: 'raceEnd', race: finishedRace });
   }
   resetRaceControlState({ preserveLastRaceControl: true });

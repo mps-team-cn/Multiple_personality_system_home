@@ -652,7 +652,7 @@ function closeNoticeModal(action = 'cancel') {
     return;
   }
 
-  if (action !== 'confirm' && noticeModalConfig && noticeModalConfig.onCancel) {
+  if (action === 'cancel' && noticeModalConfig && noticeModalConfig.onCancel) {
     noticeModalConfig.onCancel();
   }
 }
@@ -687,7 +687,7 @@ function recalculatePlayerStats() {
 }
 
 function createOwnedPart(part) {
-  return {
+  const result = {
     ...part,
     id: gameState.nextPartId++,
   };
@@ -1132,7 +1132,7 @@ function createSaveData() {
     },
   };
 
-  // GSafe 存档校验和：防篡改
+  // GSafe 存档校验和：只用于提示本地数据损坏或版本迁移问题，不用于封禁。
   if (typeof gsafeChecksum === 'function') {
     try {
       result._gsafeChecksum = gsafeChecksum(result);
@@ -1698,6 +1698,12 @@ function updateStats() {
   el.currentVehicleText.textContent = '玩家小车';
   if (el.versionText) {
     el.versionText.textContent = GAME_VERSION;
+  }
+  if (el.headerContact) {
+    el.headerContact.textContent = `群:${RACE_QQ_GROUP}`;
+  }
+  if (el.versionQqText) {
+    el.versionQqText.textContent = `QQ群 ${RACE_QQ_GROUP}`;
   }
   if (el.versionNote) {
     el.versionNote.textContent = GAME_VERSION_NOTE;

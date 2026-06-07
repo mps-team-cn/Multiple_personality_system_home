@@ -51,6 +51,12 @@ function bindEvents() {
     loadGame();
     blurAfterPointerClick(event);
   });
+  if (el.downloadLocalDataBtn) {
+    el.downloadLocalDataBtn.addEventListener('click', (event) => {
+      downloadLocalData();
+      blurAfterPointerClick(event);
+    });
+  }
   el.restartBtn.addEventListener('click', (event) => {
     restartGame();
     blurAfterPointerClick(event);
@@ -98,7 +104,7 @@ function bindEvents() {
 
   if (el.noticeModalCloseBtn) {
     el.noticeModalCloseBtn.addEventListener('click', (event) => {
-      closeNoticeModal('cancel');
+      closeNoticeModal('dismiss');
       blurAfterPointerClick(event);
     });
   }
@@ -120,14 +126,14 @@ function bindEvents() {
   if (el.noticeModal) {
     el.noticeModal.addEventListener('click', (event) => {
       if (event.target === el.noticeModal) {
-        closeNoticeModal('cancel');
+        closeNoticeModal('dismiss');
       }
     });
   }
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && el.noticeModal && !el.noticeModal.hidden) {
-      closeNoticeModal('cancel');
+      closeNoticeModal('dismiss');
       return;
     }
 
@@ -213,6 +219,12 @@ function init() {
   } else if (startupLoadResult.status === 'invalid') {
     addLog(`存档读取失败：${startupLoadResult.message}`);
     addLog('当前未自动覆盖原存档；自动保存已暂停，请点击“重开并清档”或手动保存覆盖。');
+  } else if (startupLoadResult.status === 'checksum_mismatch') {
+    addLog(`存档读取失败：${startupLoadResult.message}`);
+    addLog('当前未自动覆盖原存档；请先尝试修复或清理本地数据。');
+    if (typeof openSaveChecksumRecoveryModal === 'function') {
+      openSaveChecksumRecoveryModal(startupLoadResult.saveData);
+    }
   } else if (startupLoadResult.status === 'access_error') {
     addLog(`本地存档不可用：${startupLoadResult.message} 当前已开始新游戏。`);
   }

@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS = Object.freeze({
   telemetryEnabled: true,
 });
 const GAME_VERSION = 'v2.0';
+const RACE_QQ_GROUP = '727419840';
 const GAME_VERSION_NOTE =
   '神话装备强化系统与设置更新：可强化神话装备，并新增信息收集与本地数据清理开关。';
 const AI_ASSIST_REACTION_RANGE_SECONDS = [0.22, 0.4];

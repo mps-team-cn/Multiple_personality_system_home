@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * GSafe 反作弊系统 v1.0
+ * GSafe 异常检测系统 v1.1
  *
  * Powered by Guoge
  * GitHub  : https://github.com/CHINAGUOGE
@@ -21,18 +21,64 @@
  *  11. 脚本注入检测 (控制台操作痕迹)
  *  12. 存档哈希链 (防批量篡改)
  *
- * 硬标记 -> 立即封禁
- * 软标记 -> 累计 3 条封禁
- * 封禁通过 cookie 下发，有效期 1 年；本地单机模式允许玩家清理本地数据后重来。
+ * GSafe 只保护本局成绩、成就和日志可信度，不做永久封禁。
  */
 
 const GSafe = (() => {
   /* ═══ 字符串编码（避免静态搜索） ═══ */
   const _s = (arr) => arr.map((c) => String.fromCharCode(c)).join('');
   const TAG = _s([91, 71, 83, 97, 102, 101, 93]); // [GSafe]
-  const BAN_KEY = _s([103, 115, 97, 102, 101, 95, 98, 97, 110]); // gsafe_ban
-  const FP_KEY = _s([103, 115, 102, 112]); // gsfp
-  const VER = '1.0';
+  const LEGACY_BAN_KEY = _s([103, 115, 97, 102, 101, 95, 98, 97, 110]); // gsafe_ban
+  const LEGACY_FP_KEY = _s([103, 115, 102, 112]); // gsfp
+  const VER = '1.1';
+  const RISK_NOTICE_ID = 'gsafe-overlay';
+  const EVIDENCE_DB_NAME = 'mps-race-gsafe';
+  const EVIDENCE_DB_VERSION = 1;
+  const EVIDENCE_STORE_NAME = 'evidence';
+
+  const RISK_WEIGHTS = Object.freeze({
+    REACTION_INHUMAN: 2,
+    REACTION_SUSPICIOUS: 1,
+    REACTION_CONSISTENTLY_SUSPICIOUS: 2,
+    AUTO_START_DETECTED: 3,
+    CASH_ANOMALY: 2,
+    CASH_FARMING: 3,
+    ACHIEVEMENT_INJECTION: 1,
+    ACHIEVEMENT_FARMING: 2,
+    INVENTORY_ANOMALY: 2,
+    PHASE_SKIP: 4,
+    PHASE_INVALID: 4,
+    FN_OVERRIDE: 5,
+    MATH_RANDOM_HOOK: 5,
+    PERFORMANCE_NOW_HOOK: 5,
+    DATE_NOW_HOOK: 5,
+    STAT_CEILING_BREACH: 5,
+    STAT_CLAMP_BREACH: 5,
+    STATS_MISMATCH: 5,
+    STATS_ROLLBACK: 5,
+    SCRIPT_REMOVED: 5,
+    RACE_COUNT_ANOMALY: 4,
+    SAVE_CHECKSUM_MISMATCH: 3,
+    EVAL_USAGE: 2,
+  });
+
+  const RACE_ACHIEVEMENT_SOURCES = new Set([
+    'validStart',
+    'falseStart',
+    'raceEnd',
+    'practiceRecovery',
+  ]);
+
+  const gsafeState = {
+    riskScore: 0,
+    invalidCurrentRace: false,
+    achievementLocked: false,
+    evidence: [],
+  };
+
+  let riskNoticeShown = false;
+  let safetyNoticeShown = false;
+  let evidenceDbPromise = null;
 
   /* ═══ FNV-1a 32 位哈希 ═══ */
   function fnv1a(str) {
@@ -66,59 +112,6 @@ const GSafe = (() => {
     return fnv1a(sortedJSON(copy)) === data._gsafeChecksum;
   };
 
-  /* ═══ 证据收集 ═══ */
-  const evidence = [];
-  let softCount = 0;
-
-  function flag(code, detail, hard) {
-    const entry = { flag: code, ts: Date.now(), detail: detail || '' };
-    evidence.push(entry);
-    console.warn(TAG + ' ' + code + ': ' + (detail || ''));
-    if (hard) {
-      ban(code);
-    } else {
-      softCount++;
-      if (softCount >= 3) ban(code);
-    }
-  }
-
-  /* ═══ 生成封禁代码 ═══ */
-  function genBanCode(reason) {
-    const ts = Date.now().toString(36);
-    const rh = fnv1a(reason + ts).toString(36).toUpperCase().slice(0, 6);
-    return 'GS-' + ts.toUpperCase().slice(-4) + '-' + rh;
-  }
-
-  /* ═══ 浏览器指纹 ═══ */
-  function getFingerprint() {
-    try {
-      const canvas = document.createElement('canvas');
-      canvas.width = 200;
-      canvas.height = 50;
-      const ctx = canvas.getContext('2d');
-      ctx.textBaseline = 'top';
-      ctx.font = '14px Arial';
-      ctx.fillText('GSafe-fingerprint', 2, 2);
-      const canvasHash = fnv1a(canvas.toDataURL());
-      const ua = fnv1a(navigator.userAgent || '');
-      const screen_ = fnv1a(screen.width + 'x' + screen.height);
-      const lang = fnv1a(navigator.language || '');
-      return ((canvasHash ^ ua ^ screen_ ^ lang) >>> 0).toString(36);
-    } catch (_) {
-      return fnv1a(navigator.userAgent + screen.width).toString(36);
-    }
-  }
-
-  /* ═══ Cookie 读写 ═══ */
-  function setCookie(name, value, maxAge) {
-    document.cookie = name + '=' + encodeURIComponent(value) + ';path=/;max-age=' + maxAge + ';SameSite=Strict';
-  }
-
-  function getCookie(name) {
-    const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
-    return m ? decodeURIComponent(m[1]) : null;
-  }
-
   function removeCookie(name) {
     document.cookie = name + '=;path=/;max-age=0;SameSite=Strict';
     document.cookie = name + '=;path=/;expires=Thu, 01 Jan 1970 00:00:00 GMT;SameSite=Strict';
@@ -145,7 +138,7 @@ const GSafe = (() => {
     return keys;
   }
 
-  function clearLocalDataAndBan() {
+  function clearLocalDataAndReload() {
     try {
       if (typeof clearAllRaceLocalData === 'function') {
         clearAllRaceLocalData();
@@ -154,7 +147,7 @@ const GSafe = (() => {
           localStorage.removeItem(key);
         });
       }
-      localStorage.removeItem(BAN_KEY);
+      localStorage.removeItem(LEGACY_BAN_KEY);
     } catch (error) {
       return {
         ok: false,
@@ -162,8 +155,8 @@ const GSafe = (() => {
       };
     }
 
-    try { sessionStorage.removeItem(FP_KEY); } catch (_) {}
-    removeCookie(BAN_KEY);
+    try { sessionStorage.removeItem(LEGACY_FP_KEY); } catch (_) {}
+    removeCookie(LEGACY_BAN_KEY);
 
     return { ok: true };
   }
@@ -191,60 +184,245 @@ const GSafe = (() => {
     }
   }
 
-  /* ═══ 封禁系统 ═══ */
-  let banned = false;
-  let banCode = '';
-
-  function ban(reason) {
-    if (banned) return;
-    banned = true;
-    banCode = genBanCode(reason);
-    const fp = getFingerprint();
-    const payload = JSON.stringify({
-      v: 1,
-      ts: Date.now(),
-      reason: reason,
-      code: banCode,
-      evidence: evidence.slice(-20),
-      fp: fp,
-    });
-    setCookie(BAN_KEY, payload, 31536000);
-    try { sessionStorage.setItem(FP_KEY, fp); } catch (_) {}
-    showBanOverlay(reason, banCode);
-    console.error(TAG + ' Game suspended. Code: ' + banCode + ' Reason: ' + reason);
+  function getAppealGroupText() {
+    return typeof RACE_QQ_GROUP !== 'undefined' ? RACE_QQ_GROUP : '未配置';
   }
 
-  function checkExistingBan() {
-    const raw = getCookie(BAN_KEY);
-    if (raw) {
-      try {
-        const data = JSON.parse(raw);
-        if (data && data.reason) {
-          banned = true;
-          banCode = data.code || genBanCode(data.reason);
-          showBanOverlay(data.reason, banCode);
-          return true;
-        }
-      } catch (_) {}
+  function getRiskWeight(code, weight) {
+    if (typeof weight === 'number' && Number.isFinite(weight) && weight > 0) {
+      return weight;
     }
-    return false;
+    return RISK_WEIGHTS[code] || 1;
   }
 
-  /* ═══ 封禁遮罩 UI ═══ */
-  function showBanOverlay(reason, code) {
-    if (document.getElementById('gsafe-overlay')) return;
+  function cloneState() {
+    return {
+      riskScore: gsafeState.riskScore,
+      invalidCurrentRace: gsafeState.invalidCurrentRace,
+      achievementLocked: gsafeState.achievementLocked,
+      evidence: gsafeState.evidence.slice(),
+    };
+  }
 
-    if (!document.getElementById('gsafe-ban-css')) {
+  function openEvidenceDb() {
+    if (!('indexedDB' in window)) {
+      return Promise.reject(new Error('IndexedDB unavailable'));
+    }
+
+    if (evidenceDbPromise) {
+      return evidenceDbPromise;
+    }
+
+    evidenceDbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(EVIDENCE_DB_NAME, EVIDENCE_DB_VERSION);
+
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        const store = db.objectStoreNames.contains(EVIDENCE_STORE_NAME)
+          ? request.transaction.objectStore(EVIDENCE_STORE_NAME)
+          : db.createObjectStore(EVIDENCE_STORE_NAME, {
+              keyPath: 'id',
+              autoIncrement: true,
+            });
+
+        if (!store.indexNames.contains('ts')) {
+          store.createIndex('ts', 'ts', { unique: false });
+        }
+        if (!store.indexNames.contains('flag')) {
+          store.createIndex('flag', 'flag', { unique: false });
+        }
+      };
+
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('Failed to open evidence db'));
+    }).catch((error) => {
+      evidenceDbPromise = null;
+      throw error;
+    });
+
+    return evidenceDbPromise;
+  }
+
+  function writeEvidenceEntry(entry) {
+    openEvidenceDb()
+      .then((db) => {
+        const tx = db.transaction(EVIDENCE_STORE_NAME, 'readwrite');
+        tx.objectStore(EVIDENCE_STORE_NAME).add({
+          ...entry,
+          version: VER,
+          createdAt: new Date(entry.ts).toISOString(),
+        });
+      })
+      .catch(() => {});
+  }
+
+  function readEvidenceEntries() {
+    return openEvidenceDb()
+      .then(
+        (db) =>
+          new Promise((resolve, reject) => {
+            const tx = db.transaction(EVIDENCE_STORE_NAME, 'readonly');
+            const request = tx.objectStore(EVIDENCE_STORE_NAME).getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error || new Error('Failed to read evidence'));
+          })
+      )
+      .catch(() => gsafeState.evidence.slice());
+  }
+
+  function invalidateCurrentRace(reason) {
+    if (!gsafeState.invalidCurrentRace && typeof addLog === 'function') {
+      addLog('GSafe 检测到本局数据异常：本局成绩不会计入成就或连胜。');
+    }
+    gsafeState.invalidCurrentRace = true;
+    showRiskOverlay(reason);
+  }
+
+  function enterSafetyMode(reason) {
+    if (!gsafeState.achievementLocked && typeof addLog === 'function') {
+      addLog('GSafe 已进入安全模式：成就解锁暂停，刷新或重开后恢复。');
+    }
+    gsafeState.achievementLocked = true;
+    showRiskOverlay(reason, true);
+  }
+
+  function flag(code, detail, weight) {
+    const score = getRiskWeight(code, weight);
+    const entry = {
+      flag: code,
+      ts: Date.now(),
+      detail: detail || '',
+      weight: score,
+      riskScore: gsafeState.riskScore + score,
+    };
+    gsafeState.riskScore += score;
+    gsafeState.evidence.push(entry);
+    writeEvidenceEntry(entry);
+    if (gsafeState.evidence.length > 50) {
+      gsafeState.evidence.shift();
+    }
+
+    console.warn(
+      TAG +
+        ' ' +
+        code +
+        ' +' +
+        score +
+        ' risk=' +
+        gsafeState.riskScore +
+        ': ' +
+        (detail || '')
+    );
+
+    if (gsafeState.riskScore >= 6) {
+      invalidateCurrentRace(code);
+    }
+    if (gsafeState.riskScore >= 10) {
+      enterSafetyMode(code);
+    }
+
+    return entry;
+  }
+
+  function resetRaceRisk() {
+    if (!gsafeState.achievementLocked) {
+      gsafeState.riskScore = 0;
+    }
+    gsafeState.invalidCurrentRace = false;
+    riskNoticeShown = false;
+  }
+
+  function resetSessionRisk() {
+    gsafeState.riskScore = 0;
+    gsafeState.invalidCurrentRace = false;
+    gsafeState.achievementLocked = false;
+    gsafeState.evidence = [];
+    riskNoticeShown = false;
+    safetyNoticeShown = false;
+    consecutiveFastReactionCount = 0;
+  }
+
+  function canUnlockAchievement(achievement, options = {}) {
+    if (gsafeState.achievementLocked) {
+      return false;
+    }
+
+    const source = typeof options.source === 'string' ? options.source : '';
+    if (gsafeState.invalidCurrentRace && RACE_ACHIEVEMENT_SOURCES.has(source)) {
+      return false;
+    }
+
+    return Boolean(achievement);
+  }
+
+  function exportEvidenceLog() {
+    return readEvidenceEntries().then((records) => {
+      const payload = JSON.stringify(
+        {
+          version: VER,
+          generatedAt: new Date().toISOString(),
+          state: cloneState(),
+          evidenceTable: {
+            database: EVIDENCE_DB_NAME,
+            store: EVIDENCE_STORE_NAME,
+            indexes: ['ts', 'flag'],
+            records,
+          },
+          userAgent: navigator.userAgent || '',
+        },
+        null,
+        2
+      );
+      const filename = 'gsafe-evidence-' + Date.now() + '.json';
+
+      try {
+        const blob = new Blob([payload], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        return Promise.resolve();
+      } catch (error) {
+        return copyText(payload);
+      }
+    });
+  }
+
+  function clearLegacyBanState() {
+    try { localStorage.removeItem(LEGACY_BAN_KEY); } catch (_) {}
+    try { sessionStorage.removeItem(LEGACY_FP_KEY); } catch (_) {}
+    removeCookie(LEGACY_BAN_KEY);
+  }
+
+  /* ═══ 异常提示 UI ═══ */
+  function showRiskOverlay(reason, safetyMode) {
+    if (document.getElementById(RISK_NOTICE_ID)) return;
+    if (safetyMode) {
+      if (safetyNoticeShown) return;
+      safetyNoticeShown = true;
+    } else if (riskNoticeShown) {
+      return;
+    } else {
+      riskNoticeShown = true;
+    }
+
+    if (!document.getElementById('gsafe-risk-css')) {
       const css = document.createElement('style');
-      css.id = 'gsafe-ban-css';
+      css.id = 'gsafe-risk-css';
       css.textContent =
-        '#gsafe-overlay{position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;font-family:"Segoe UI","Microsoft YaHei",sans-serif}' +
+        '#gsafe-overlay{position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.58);display:flex;align-items:center;justify-content:center;font-family:"Segoe UI","Microsoft YaHei",sans-serif}' +
         '#gsafe-card{background:#fff;border:2px solid #808080;box-shadow:4px 4px 0 #000;max-width:440px;width:90%}' +
-        '#gsafe-titlebar{background:#b71c1c;color:#fff;padding:5px 8px;font-size:12px;font-weight:700;display:flex;justify-content:space-between;align-items:center}' +
+        '#gsafe-titlebar{background:#1f4f82;color:#fff;padding:5px 8px;font-size:12px;font-weight:700;display:flex;justify-content:space-between;align-items:center}' +
         '#gsafe-body{padding:20px 16px 12px;text-align:center}' +
         '#gsafe-body p{margin:0 0 10px;font-size:14px;color:#333;line-height:1.6}' +
         '#gsafe-body .gs-code{display:inline-block;margin:8px 0;padding:6px 16px;background:#f5f5f5;border:1px solid #ddd;border-radius:4px;font-family:monospace;font-size:13px;color:#b71c1c;letter-spacing:1px;user-select:all}' +
         '#gsafe-body .gs-reason{font-size:11px;color:#999;margin-top:6px}' +
+        '#gsafe-body .gs-appeal{margin-top:10px;font-size:12px;color:#333}' +
+        '#gsafe-body .gs-appeal span{font-family:monospace;color:#1d4ed8;user-select:all}' +
         '#gsafe-actions{padding:8px 16px 16px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center}' +
         '#gsafe-actions button{background:#d4d0c8;border:2px outset #fff;padding:5px 14px;min-height:30px;font-size:12px;cursor:pointer;font-family:inherit}' +
         '#gsafe-actions button:active{border-style:inset}' +
@@ -253,68 +431,71 @@ const GSafe = (() => {
     }
 
     const overlay = document.createElement('div');
-    overlay.id = 'gsafe-overlay';
+    const appealGroup = getAppealGroupText();
+    overlay.id = RISK_NOTICE_ID;
     overlay.innerHTML =
       '<div id="gsafe-card">' +
-        '<div id="gsafe-titlebar"><span>GSafe v' + VER + ' - 安全警告</span><span>&#10006;</span></div>' +
+        '<div id="gsafe-titlebar"><span>GSafe v' + VER + ' - 异常检测</span><span>&#9888;</span></div>' +
         '<div id="gsafe-body">' +
-          '<p>你已被封禁。本地单机数据可以清理后重新开始。</p>' +
-          '<div class="gs-code">' + escapeHTML(code || 'N/A') + '</div>' +
+          '<p>检测到本局数据异常，本局成绩不会计入成就或连胜。</p>' +
+          '<p>如果你没有修改数据，可能是浏览器、旧存档或版本更新导致。</p>' +
+          (safetyMode ? '<p>当前已进入安全模式，刷新或重开后恢复成就检测。</p>' : '') +
+          '<div class="gs-code">风险分：' + escapeHTML(gsafeState.riskScore) + '</div>' +
           '<div class="gs-reason">原因：' + escapeHTML(reason || '未知') + '</div>' +
+          '<div class="gs-appeal">反馈QQ群：<span>' + escapeHTML(appealGroup) + '</span></div>' +
         '</div>' +
         '<div id="gsafe-actions">' +
-          '<button id="gsafe-reload" data-gsafe-action="reload" type="button">刷新</button>' +
-          '<button id="gsafe-copy" data-gsafe-action="copy" type="button">复制封禁码</button>' +
-          '<button id="gsafe-clear" class="gs-danger" data-gsafe-action="clear" type="button">清理本地数据并重来</button>' +
+          '<button id="gsafe-continue" data-gsafe-action="continue" type="button">继续游戏</button>' +
+          '<button id="gsafe-export" data-gsafe-action="export" type="button">导出异常日志</button>' +
+          '<button id="gsafe-download" data-gsafe-action="download" type="button">下载本地数据</button>' +
+          '<button id="gsafe-clear" class="gs-danger" data-gsafe-action="clear" type="button">清理本地数据</button>' +
         '</div>' +
       '</div>';
     document.body.appendChild(overlay);
 
-    document.getElementById('gsafe-reload').addEventListener('click', function () {
-      location.reload();
+    document.getElementById('gsafe-continue').addEventListener('click', function () {
+      overlay.remove();
     });
 
-    document.getElementById('gsafe-copy').addEventListener('click', function (event) {
+    document.getElementById('gsafe-export').addEventListener('click', function (event) {
       const button = event.currentTarget;
-      copyText(code || '')
+      exportEvidenceLog()
         .then(function () {
-          button.textContent = '已复制';
+          button.textContent = '已导出';
         })
         .catch(function () {
-          button.textContent = '复制失败';
+          button.textContent = '导出失败';
+        });
+    });
+
+    document.getElementById('gsafe-download').addEventListener('click', function (event) {
+      const button = event.currentTarget;
+      if (typeof downloadLocalData === 'function') {
+        downloadLocalData();
+        button.textContent = '已开始下载';
+        return;
+      }
+      exportEvidenceLog()
+        .then(function () {
+          button.textContent = '已导出日志';
+        })
+        .catch(function () {
+          button.textContent = '下载失败';
         });
     });
 
     document.getElementById('gsafe-clear').addEventListener('click', function () {
-      const confirmed = window.confirm('确定要清理本地 Race 数据和 GSafe 封禁标记，然后重新开始吗？此操作不可恢复。');
+      const confirmed = window.confirm('确定要清理本地 Race 数据并重新开始吗？此操作不可恢复。');
       if (!confirmed) return;
 
-      const result = clearLocalDataAndBan();
+      const result = clearLocalDataAndReload();
       if (!result.ok) {
         window.alert('清理失败：' + result.message);
         return;
       }
 
-      banned = false;
       location.reload();
     });
-
-    // 拦截键盘（允许 F5 / Ctrl+R 刷新）
-    document.addEventListener('keydown', function (e) {
-      if (!banned) return;
-      if (e.key === 'F5') return;
-      if (e.ctrlKey && (e.key === 'r' || e.key === 'R')) return;
-      e.preventDefault();
-      e.stopPropagation();
-    }, true);
-
-    // 拦截鼠标
-    document.addEventListener('click', function (e) {
-      if (!banned) return;
-      if (e.target.closest && e.target.closest('[data-gsafe-action]')) return;
-      e.preventDefault();
-      e.stopPropagation();
-    }, true);
   }
 
   /* ═══ 1. 函数完整性检查 ═══ */
@@ -377,24 +558,24 @@ const GSafe = (() => {
       try {
         const current = Function.prototype.toString.call(w.obj[w.key]);
         if (current !== fnSigs[w.path]) {
-          flag('FN_OVERRIDE', w.path + ' has been replaced', true);
+          flag('FN_OVERRIDE', w.path + ' has been replaced');
           return;
         }
       } catch (_) {}
     }
     try {
       if (Function.prototype.toString.call(Math.random) !== fnSigs['Math.random']) {
-        flag('MATH_RANDOM_HOOK', 'Math.random replaced', true);
+        flag('MATH_RANDOM_HOOK', 'Math.random replaced');
       }
     } catch (_) {}
     try {
       if (Function.prototype.toString.call(performance.now) !== fnSigs['performance.now']) {
-        flag('PERFORMANCE_NOW_HOOK', 'performance.now replaced', true);
+        flag('PERFORMANCE_NOW_HOOK', 'performance.now replaced');
       }
     } catch (_) {}
     try {
       if (Function.prototype.toString.call(Date.now) !== fnSigs['Date.now']) {
-        flag('DATE_NOW_HOOK', 'Date.now replaced', true);
+        flag('DATE_NOW_HOOK', 'Date.now replaced');
       }
     } catch (_) {}
   }
@@ -471,7 +652,7 @@ const GSafe = (() => {
     // ─── 刷钱检测 ───
     const cashDelta = cur.cash - p.cash;
     if (cashDelta > 3000 && p.phase !== 'finished') {
-      flag('CASH_ANOMALY', 'cash ' + p.cash + ' -> ' + cur.cash, false);
+      flag('CASH_ANOMALY', 'cash ' + p.cash + ' -> ' + cur.cash);
     }
     // 连续异常增长
     cashHistory.push({ ts: Date.now(), cash: cur.cash });
@@ -483,59 +664,59 @@ const GSafe = (() => {
         if (d > 3000) abnormalCount++;
       }
       if (abnormalCount >= 2) {
-        flag('CASH_FARMING', abnormalCount + ' abnormal cash jumps in ' + cashHistory.length + ' snapshots', false);
+        flag('CASH_FARMING', abnormalCount + ' abnormal cash jumps in ' + cashHistory.length + ' snapshots');
         cashHistory = [];
       }
     }
 
     // ─── 场次篡改 ───
     if (cur.raceCount < p.raceCount) {
-      flag('RACE_COUNT_ANOMALY', 'raceCount ' + p.raceCount + ' -> ' + cur.raceCount, true);
+      flag('RACE_COUNT_ANOMALY', 'raceCount ' + p.raceCount + ' -> ' + cur.raceCount);
     }
     if (cur.raceCount - p.raceCount > 1 && p.phase === 'idle') {
-      flag('RACE_COUNT_ANOMALY', 'raceCount jumped ' + p.raceCount + ' -> ' + cur.raceCount, false);
+      flag('RACE_COUNT_ANOMALY', 'raceCount jumped ' + p.raceCount + ' -> ' + cur.raceCount);
     }
 
     // ─── 统计数据篡改 ───
     if (cur.statsTotalWins > cur.statsTotalRaces) {
-      flag('STATS_MISMATCH', 'wins(' + cur.statsTotalWins + ') > races(' + cur.statsTotalRaces + ')', true);
+      flag('STATS_MISMATCH', 'wins(' + cur.statsTotalWins + ') > races(' + cur.statsTotalRaces + ')');
     }
     if (cur.statsTotalRaces < p.statsTotalRaces) {
-      flag('STATS_ROLLBACK', 'totalRaces ' + p.statsTotalRaces + ' -> ' + cur.statsTotalRaces, true);
+      flag('STATS_ROLLBACK', 'totalRaces ' + p.statsTotalRaces + ' -> ' + cur.statsTotalRaces);
     }
 
     // ─── 属性突破理论上限 ───
     ['engine', 'tire', 'gearbox', 'hp'].forEach(function (k) {
       if (statCeilings[k] && cur[k] > statCeilings[k]) {
-        flag('STAT_CEILING_BREACH', k + '=' + cur[k] + ' > max ' + statCeilings[k], true);
+        flag('STAT_CEILING_BREACH', k + '=' + cur[k] + ' > max ' + statCeilings[k]);
       }
     });
-    if (cur.stability > 80) flag('STAT_CLAMP_BREACH', 'stability=' + cur.stability + ' > 80', true);
-    if (cur.weight < 760) flag('STAT_CLAMP_BREACH', 'weight=' + cur.weight + ' < 760', true);
+    if (cur.stability > 80) flag('STAT_CLAMP_BREACH', 'stability=' + cur.stability + ' > 80');
+    if (cur.weight < 760) flag('STAT_CLAMP_BREACH', 'weight=' + cur.weight + ' < 760');
 
     // ─── 刷成就检测 ───
     const achvDelta = cur.achvCount - p.achvCount;
     if (achvDelta > 2) {
-      flag('ACHIEVEMENT_INJECTION', achvDelta + ' achievements at once', false);
+      flag('ACHIEVEMENT_INJECTION', achvDelta + ' achievements at once');
     }
     achvHistory.push(achvDelta);
     if (achvHistory.length > 5) achvHistory.shift();
     if (achvHistory.length >= 3) {
       const totalRecentAchv = achvHistory.reduce((a, b) => a + Math.max(0, b), 0);
       if (totalRecentAchv >= 5) {
-        flag('ACHIEVEMENT_FARMING', totalRecentAchv + ' achievements in ' + achvHistory.length + ' checks', false);
+        flag('ACHIEVEMENT_FARMING', totalRecentAchv + ' achievements in ' + achvHistory.length + ' checks');
         achvHistory = [];
       }
     }
 
     // ─── 库存异常 ───
     if (cur.invLen - p.invLen > 3 && p.phase !== 'idle') {
-      flag('INVENTORY_ANOMALY', 'inventory +' + (cur.invLen - p.invLen) + ' outside shop', false);
+      flag('INVENTORY_ANOMALY', 'inventory +' + (cur.invLen - p.invLen) + ' outside shop');
     }
 
     // ─── 阶段非法值 ───
-    if (typeof PHASE_LABELS !== 'undefined' && cur.phase && !PHASE_LABELS[cur.phase] && cur.phase !== 'gsafe_banned') {
-      flag('PHASE_INVALID', 'phase=' + cur.phase, true);
+    if (typeof PHASE_LABELS !== 'undefined' && cur.phase && !PHASE_LABELS[cur.phase]) {
+      flag('PHASE_INVALID', 'phase=' + cur.phase);
     }
 
     // ─── 阶段跳转合法性 ───
@@ -557,13 +738,39 @@ const GSafe = (() => {
     if (!from || !to || from === to) return;
     const valid = VALID_TRANSITIONS[from];
     if (valid && valid.indexOf(to) === -1) {
-      flag('PHASE_SKIP', from + ' -> ' + to, true);
+      flag('PHASE_SKIP', from + ' -> ' + to);
     }
   }
 
   /* ═══ 3. 反应时间校验 ═══ */
   let prevReactionCheck = { time: null, control: null };
-  let suspiciousReactionCount = 0;
+  let consecutiveFastReactionCount = 0;
+
+  function evaluateManualReaction(t) {
+    if (!Number.isFinite(t)) return;
+
+    if (t < 0.030) {
+      flag('REACTION_INHUMAN', 'reaction=' + t.toFixed(3) + 's');
+      invalidateCurrentRace('REACTION_INHUMAN');
+      consecutiveFastReactionCount++;
+      return;
+    }
+
+    if (t < 0.080) {
+      consecutiveFastReactionCount++;
+      flag('REACTION_SUSPICIOUS', 'reaction=' + t.toFixed(3) + 's');
+      if (consecutiveFastReactionCount >= 3) {
+        flag(
+          'REACTION_CONSISTENTLY_SUSPICIOUS',
+          consecutiveFastReactionCount + ' consecutive sub-0.08s reactions'
+        );
+        invalidateCurrentRace('REACTION_CONSISTENTLY_SUSPICIOUS');
+      }
+      return;
+    }
+
+    consecutiveFastReactionCount = 0;
+  }
 
   function checkReaction() {
     if (typeof gameState === 'undefined') return;
@@ -574,18 +781,7 @@ const GSafe = (() => {
       return;
     }
     prevReactionCheck = { time: t, control: c };
-    if (t < 0.050) {
-      flag('REACTION_INHUMAN', 'reaction=' + t.toFixed(3) + 's', false);
-      suspiciousReactionCount++;
-    } else if (t < 0.100) {
-      suspiciousReactionCount++;
-      if (suspiciousReactionCount >= 3) {
-        flag('REACTION_CONSISTENTLY_SUSPICIOUS', suspiciousReactionCount + ' sub-0.1s reactions', false);
-        suspiciousReactionCount = 0;
-      }
-    } else {
-      suspiciousReactionCount = Math.max(0, suspiciousReactionCount - 1);
-    }
+    evaluateManualReaction(t);
   }
 
   /* ═══ 4. 脚本自保护 ═══ */
@@ -601,7 +797,7 @@ const GSafe = (() => {
     if (!selfScript) return;
     try {
       if (!document.contains(selfScript)) {
-        flag('SCRIPT_REMOVED', 'gsafe.js script element removed', true);
+        flag('SCRIPT_REMOVED', 'gsafe.js script element removed');
       }
     } catch (_) {}
   }
@@ -623,7 +819,7 @@ const GSafe = (() => {
       if (t !== null && t < 0.080) {
         fastStartCount++;
         if (fastStartCount >= 3) {
-          flag('AUTO_START_DETECTED', fastStartCount + ' sub-80ms starts', false);
+          flag('AUTO_START_DETECTED', fastStartCount + ' sub-80ms starts');
           fastStartCount = 0;
         }
       } else {
@@ -642,7 +838,7 @@ const GSafe = (() => {
       window.eval = function () {
         consoleUsageCount++;
         if (consoleUsageCount > 5) {
-          flag('EVAL_USAGE', 'eval() called ' + consoleUsageCount + ' times', false);
+          flag('EVAL_USAGE', 'eval() called ' + consoleUsageCount + ' times');
         }
         return origEval.apply(this, arguments);
       };
@@ -654,9 +850,12 @@ const GSafe = (() => {
     return Math.floor(ms * (0.7 + Math.random() * 0.6));
   }
 
+  function isGameReady() {
+    return typeof gameState !== 'undefined' && gameState && gameState.ready;
+  }
+
   function startMonitoring() {
     function loopFnCheck() {
-      if (banned) return;
       checkFnIntegrity();
       checkSelfIntegrity();
       setTimeout(loopFnCheck, jitter(5000));
@@ -664,7 +863,10 @@ const GSafe = (() => {
     setTimeout(loopFnCheck, jitter(3000));
 
     function loopSnap() {
-      if (banned) return;
+      if (!isGameReady()) {
+        setTimeout(loopSnap, jitter(1000));
+        return;
+      }
       const cur = takeSnap();
       diffSnap(cur);
       prevSnap = cur;
@@ -677,21 +879,42 @@ const GSafe = (() => {
 
   /* ═══ 初始化 ═══ */
   function init() {
-    if (checkExistingBan()) return;
+    clearLegacyBanState();
     initSelfProtect();
     computeCeilings();
     initFnChecks();
     initConsoleDetection();
-    prevSnap = takeSnap();
+    prevSnap = null;
     startMonitoring();
     try { sessionStorage.setItem('_gs', '1'); } catch (_) {}
-    console.log(TAG + ' Anti-cheat v' + VER + ' initialized.');
+    console.log(TAG + ' Anomaly detector v' + VER + ' initialized.');
   }
+
+  globalThis.gsafeBeginRace = resetRaceRisk;
+  globalThis.gsafeResetSession = resetSessionRisk;
+  globalThis.gsafeGetState = cloneState;
+  globalThis.gsafeReadEvidenceEntries = readEvidenceEntries;
+  globalThis.gsafeIsCurrentRaceInvalid = function () {
+    return gsafeState.invalidCurrentRace;
+  };
+  globalThis.gsafeIsAchievementLocked = function () {
+    return gsafeState.achievementLocked;
+  };
+  globalThis.gsafeCanUnlockAchievement = canUnlockAchievement;
+  globalThis.gsafeRecordManualReaction = function (reactionSeconds) {
+    evaluateManualReaction(reactionSeconds);
+    prevReactionCheck = { time: reactionSeconds, control: 'manual' };
+  };
+  globalThis.gsafeFlagSaveIssue = function (detail) {
+    flag('SAVE_CHECKSUM_MISMATCH', detail || 'save checksum mismatch');
+  };
 
   return {
     init: init,
-    isBanned: function () { return banned; },
-    getBanCode: function () { return banCode; },
+    isBanned: function () { return false; },
+    getState: cloneState,
+    isCurrentRaceInvalid: function () { return gsafeState.invalidCurrentRace; },
+    isAchievementLocked: function () { return gsafeState.achievementLocked; },
     version: VER,
   };
 })();

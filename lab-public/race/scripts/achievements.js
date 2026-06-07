@@ -126,6 +126,12 @@ function completeAchievement(achievement, options = {}) {
   if (!achievement || hasCompletedAchievement(achievement.id)) {
     return false;
   }
+  if (
+    typeof gsafeCanUnlockAchievement === 'function' &&
+    !gsafeCanUnlockAchievement(achievement, options)
+  ) {
+    return false;
+  }
 
   const completedAt = new Date().toISOString();
   gameState.achievements.completed[achievement.id] = completedAt;
@@ -273,6 +279,11 @@ function checkAchievementCondition(achievement) {
 function checkAchievements(options = {}) {
   syncProgressStats();
   const unlocked = [];
+
+  if (typeof gsafeIsAchievementLocked === 'function' && gsafeIsAchievementLocked()) {
+    renderProfile();
+    return unlocked;
+  }
 
   ACHIEVEMENTS.forEach((achievement) => {
     if (hasCompletedAchievement(achievement.id)) {
