@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="指尖机械转盘：模拟金属 EDC 转盘手感的网页解压玩具。"
+    />
+    <meta name="theme-color" content="#c6c0b1" />
+    <link rel="canonical" href="https://lab.mpsteam.cn/fidget-wheel/" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>指尖机械转盘 · Fidget Wheel</title>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="../">MPS Team CN <span>/ Lab</span></a>
+        <span class="version-label">实验 v0.1</span>
+      </header>
+
+      <main class="main-content">
+        <section class="intro-copy" aria-labelledby="page-title">
+          <p class="eyebrow">FIDGET WHEEL / MECHANICAL TOY</p>
+          <h1 id="page-title">指尖机械转盘</h1>
+          <p class="intro-text">
+            像拨一枚金属 EDC 轮盘一样，拖动、甩开，让它自己沿着刻度慢慢停下。
+          </p>
+        </section>
+
+        <section class="wheel-console" aria-label="指尖机械转盘操作区">
+          <div class="console-topline">
+            <span>FIDGET WHEEL / 20 DETENTS</span>
+            <span class="spin-status" aria-live="polite">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span id="spinStatus">待机</span>
+            </span>
+          </div>
+
+          <div class="wheel-stage" id="wheelStage">
+            <div class="reading-head" aria-hidden="true">
+              <span class="reading-head-line"></span>
+              <span class="reading-head-tip"></span>
+            </div>
+
+            <div
+              id="wheel"
+              class="wheel"
+              role="slider"
+              tabindex="0"
+              aria-label="机械转盘，使用方向键也可以转动"
+              aria-valuemin="1"
+              aria-valuemax="20"
+              aria-valuenow="1"
+              aria-valuetext="当前数字 1"
+            >
+              <div class="wheel-shadow" aria-hidden="true"></div>
+              <div class="wheel-face">
+                <div class="wheel-brushed-metal" aria-hidden="true"></div>
+                <div id="tickLayer" class="tick-layer" aria-hidden="true"></div>
+                <div id="numberLayer" class="number-layer" aria-hidden="true"></div>
+                <div class="inner-ring" aria-hidden="true"></div>
+                <div class="center-rotor" aria-hidden="true">
+                  <span class="rotor-slot"></span>
+                  <span class="rotor-bolt"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="readout" aria-live="polite" aria-atomic="true">
+            <p class="readout-label">最后停下</p>
+            <p id="resultText" class="result-text">当前：1</p>
+            <p id="mechanicalNote" class="mechanical-note" role="status">
+              拖动轮盘然后松手
+            </p>
+          </div>
+
+          <div class="controls" aria-label="转盘控制">
+            <button id="spinButton" class="primary-button" type="button">随手转一下</button>
+            <button
+              id="soundButton"
+              class="secondary-button"
+              type="button"
+              aria-pressed="true"
+            >
+              声音 <span id="soundState">开</span>
+            </button>
+          </div>
+
+          <p class="interaction-hint">
+            <span class="hint-mark" aria-hidden="true">↻</span>
+            按住轮盘拖动，松手后让惯性完成这一圈
+          </p>
+        </section>
+      </main>
+
+      <footer class="page-footer">
+        <a href="../">返回 MPSTEAM Lab</a>
+        <span>本地运行 · 无账号 · 无网络接口</span>
+      </footer>
+    </div>
+
+    <script src="./game.js"></script>
+  </body>
+</html>

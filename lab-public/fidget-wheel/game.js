@@ -1,0 +1,432 @@
+"use strict";
+const COUNT = 20;
+const TAU = Math.PI * 2;
+const STEP = TAU / COUNT;
+const MAX_VELOCITY = 18;
+const REDUCED_MAX_VELOCITY = 12;
+const FRICTION = 1.22;
+const REDUCED_FRICTION = 3.25;
+const STOP_THRESHOLD = 0.14;
+const SNAP_DURATION = 300;
+const REDUCED_SNAP_DURATION = 155;
+const SAMPLE_WINDOW = 110;
+const wheel = document.querySelector('#wheel');
+const wheelStage = document.querySelector('#wheelStage');
+const wheelConsole = document.querySelector('.wheel-console');
+const tickLayer = document.querySelector('#tickLayer');
+const numberLayer = document.querySelector('#numberLayer');
+const resultText = document.querySelector('#resultText');
+const mechanicalNote = document.querySelector('#mechanicalNote');
+const spinStatus = document.querySelector('#spinStatus');
+const spinButton = document.querySelector('#spinButton');
+const soundButton = document.querySelector('#soundButton');
+const soundState = document.querySelector('#soundState');
+const readingHead = document.querySelector('.reading-head');
+if (!wheel ||
+    !wheelStage ||
+    !wheelConsole ||
+    !tickLayer ||
+    !numberLayer ||
+    !resultText ||
+    !mechanicalNote ||
+    !spinStatus ||
+    !spinButton ||
+    !soundButton ||
+    !soundState ||
+    !readingHead) {
+    throw new Error('Fidget Wheel markup is incomplete.');
+}
+const wheelElement = wheel;
+const wheelStageElement = wheelStage;
+const wheelConsoleElement = wheelConsole;
+const tickLayerElement = tickLayer;
+const numberLayerElement = numberLayer;
+const resultTextElement = resultText;
+const mechanicalNoteElement = mechanicalNote;
+const spinStatusElement = spinStatus;
+const spinButtonElement = spinButton;
+const soundButtonElement = soundButton;
+const soundStateElement = soundState;
+const readingHeadElement = readingHead;
+const tickElements = [];
+let audioContext = null;
+let animationFrameId = null;
+let mode = 'idle';
+let pointerId = null;
+let angularPosition = 0;
+let angularVelocity = 0;
+let previousFrameTime = 0;
+let snapStartPosition = 0;
+let snapTargetPosition = 0;
+let snapElapsed = 0;
+let dragStartPosition = 0;
+let dragTravel = 0;
+let lastPointerAngle = null;
+let dragSamples = [];
+let tickTravel = 0;
+let lastTickMarker = 0;
+let feedbackStartIndex = 0;
+let lastTickSoundTime = -Infinity;
+let lastVibrationTime = -Infinity;
+let soundEnabled = true;
+let reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+function normalizeAngle(angle) {
+    return ((angle + Math.PI) % TAU + TAU) % TAU - Math.PI;
+}
+function shortestAngleDelta(next, previous) {
+    return normalizeAngle(next - previous);
+}
+function clamp(value, minimum, maximum) {
+    return Math.min(Math.max(value, minimum), maximum);
+}
+function getSelectedNumber(position = angularPosition) {
+    const nearestMarker = Math.round(position / STEP);
+    const index = ((-nearestMarker % COUNT) + COUNT) % COUNT;
+    return index + 1;
+}
+function getNearestSnapTarget(position) {
+    return Math.round(position / STEP) * STEP;
+}
+function setResult(number) {
+    resultTextElement.textContent = `当前：${number}`;
+    wheelElement.setAttribute('aria-valuenow', String(number));
+    wheelElement.setAttribute('aria-valuetext', `当前数字 ${number}`);
+}
+function setMode(nextMode) {
+    mode = nextMode;
+    wheelConsoleElement.classList.toggle('is-spinning', mode !== 'idle');
+    spinStatusElement.textContent =
+        mode === 'dragging' ? '拨动中' : mode === 'spinning' ? '惯性中' : mode === 'snapping' ? '吸附中' : '待机';
+}
+function renderPosition() {
+    wheelElement.style.transform = `rotate(${angularPosition}rad)`;
+}
+function resetTickTracking() {
+    tickTravel = 0;
+    lastTickMarker = 0;
+    feedbackStartIndex = getSelectedNumber() - 1;
+}
+function flashTick(marker) {
+    const index = ((feedbackStartIndex - marker) % COUNT + COUNT) % COUNT;
+    const tick = tickElements[index];
+    tick?.classList.add('is-hot');
+    readingHeadElement.classList.remove('is-flashing');
+    void readingHeadElement.offsetWidth;
+    readingHeadElement.classList.add('is-flashing');
+    window.setTimeout(() => tick?.classList.remove('is-hot'), 115);
+    mechanicalNoteElement.textContent = `刻度 · ${((index % COUNT) + COUNT) % COUNT + 1}`;
+    playTickFeedback();
+}
+function triggerCrossedTicks(delta) {
+    tickTravel += delta;
+    if (delta > 0) {
+        while (tickTravel >= (lastTickMarker + 1) * STEP) {
+            lastTickMarker += 1;
+            flashTick(lastTickMarker);
+        }
+    }
+    else if (delta < 0) {
+        while (tickTravel <= (lastTickMarker - 1) * STEP) {
+            lastTickMarker -= 1;
+            flashTick(lastTickMarker);
+        }
+    }
+}
+function applyPosition(nextPosition, shouldTriggerFeedback = true) {
+    const previousPosition = angularPosition;
+    angularPosition = normalizeAngle(nextPosition);
+    const delta = shortestAngleDelta(angularPosition, previousPosition);
+    renderPosition();
+    if (shouldTriggerFeedback && Math.abs(delta) > 0) {
+        triggerCrossedTicks(delta);
+    }
+}
+function ensureAudio() {
+    if (!soundEnabled) {
+        return null;
+    }
+    try {
+        audioContext ??= new AudioContext();
+        if (audioContext.state === 'suspended') {
+            void audioContext.resume();
+        }
+        return audioContext;
+    }
+    catch {
+        audioContext = null;
+        return null;
+    }
+}
+function playTickFeedback() {
+    const now = performance.now();
+    if (soundEnabled && now - lastTickSoundTime >= 28) {
+        const context = ensureAudio();
+        if (context) {
+            const oscillator = context.createOscillator();
+            const gain = context.createGain();
+            const startTime = context.currentTime;
+            oscillator.type = 'triangle';
+            oscillator.frequency.setValueAtTime(370, startTime);
+            oscillator.frequency.exponentialRampToValueAtTime(235, startTime + 0.045);
+            gain.gain.setValueAtTime(0.0001, startTime);
+            gain.gain.exponentialRampToValueAtTime(0.045, startTime + 0.004);
+            gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.055);
+            oscillator.connect(gain).connect(context.destination);
+            oscillator.start(startTime);
+            oscillator.stop(startTime + 0.06);
+            lastTickSoundTime = now;
+        }
+    }
+    if ('vibrate' in navigator && now - lastVibrationTime >= 35) {
+        try {
+            navigator.vibrate(7);
+            lastVibrationTime = now;
+        }
+        catch {
+            // Vibration is an optional enhancement.
+        }
+    }
+}
+function trimSamples(now) {
+    dragSamples = dragSamples.filter((sample) => now - sample.time <= SAMPLE_WINDOW);
+}
+function beginAnimation() {
+    if (animationFrameId === null) {
+        previousFrameTime = performance.now();
+        animationFrameId = window.requestAnimationFrame(frameAnimation);
+    }
+}
+function stopAnimation() {
+    if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+    }
+}
+function finishSpin() {
+    stopAnimation();
+    angularVelocity = 0;
+    angularPosition = normalizeAngle(snapTargetPosition);
+    renderPosition();
+    const selectedNumber = getSelectedNumber();
+    setResult(selectedNumber);
+    mechanicalNoteElement.textContent = `停在第 ${selectedNumber} 格`;
+    setMode('idle');
+}
+function beginSnap() {
+    mode = 'snapping';
+    snapStartPosition = angularPosition;
+    snapTargetPosition = getNearestSnapTarget(angularPosition);
+    snapElapsed = 0;
+    setMode('snapping');
+}
+function updateSnap(deltaSeconds) {
+    snapElapsed += deltaSeconds * 1000;
+    const duration = reducedMotion ? REDUCED_SNAP_DURATION : SNAP_DURATION;
+    const progress = clamp(snapElapsed / duration, 0, 1);
+    const easedProgress = 1 - (1 - progress) ** 3;
+    const nextPosition = snapStartPosition + (snapTargetPosition - snapStartPosition) * easedProgress;
+    applyPosition(nextPosition);
+    if (progress >= 1) {
+        finishSpin();
+    }
+}
+function frameAnimation(timestamp) {
+    animationFrameId = null;
+    const elapsed = Math.min(Math.max((timestamp - previousFrameTime) / 1000, 0), 0.035);
+    previousFrameTime = timestamp;
+    if (mode === 'spinning') {
+        const damping = reducedMotion ? REDUCED_FRICTION : FRICTION;
+        const nextVelocity = angularVelocity * Math.exp(-damping * elapsed);
+        const nextPosition = angularPosition + nextVelocity * elapsed;
+        angularVelocity = nextVelocity;
+        applyPosition(nextPosition);
+        if (Math.abs(angularVelocity) <= STOP_THRESHOLD) {
+            angularVelocity = 0;
+            beginSnap();
+        }
+    }
+    else if (mode === 'snapping') {
+        updateSnap(elapsed);
+    }
+    if (mode === 'spinning' || mode === 'snapping') {
+        beginAnimation();
+    }
+}
+function beginSpin(initialVelocity) {
+    ensureAudio();
+    stopAnimation();
+    resetTickTracking();
+    angularVelocity = clamp(initialVelocity, -MAX_VELOCITY, MAX_VELOCITY);
+    if (reducedMotion) {
+        angularVelocity = clamp(angularVelocity, -REDUCED_MAX_VELOCITY, REDUCED_MAX_VELOCITY);
+    }
+    if (Math.abs(angularVelocity) < STOP_THRESHOLD) {
+        angularVelocity = angularVelocity < 0 ? -STOP_THRESHOLD : STOP_THRESHOLD;
+    }
+    setMode('spinning');
+    mechanicalNoteElement.textContent = '刻度正在经过';
+    beginAnimation();
+}
+function getPointerAngle(event) {
+    const rect = wheelStageElement.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    return Math.atan2(event.clientX - centerX, -(event.clientY - centerY));
+}
+function startDrag(event) {
+    if (event.button !== 0 && event.pointerType === 'mouse') {
+        return;
+    }
+    event.preventDefault();
+    ensureAudio();
+    stopAnimation();
+    angularVelocity = 0;
+    pointerId = event.pointerId;
+    lastPointerAngle = getPointerAngle(event);
+    dragStartPosition = angularPosition;
+    dragTravel = 0;
+    dragSamples = [{ position: 0, time: performance.now() }];
+    resetTickTracking();
+    wheelElement.setPointerCapture?.(event.pointerId);
+    setMode('dragging');
+    mechanicalNoteElement.textContent = '松手后让它自己停下';
+}
+function moveDrag(event) {
+    if (mode !== 'dragging' || pointerId !== event.pointerId || lastPointerAngle === null) {
+        return;
+    }
+    event.preventDefault();
+    const nextPointerAngle = getPointerAngle(event);
+    const delta = shortestAngleDelta(nextPointerAngle, lastPointerAngle);
+    lastPointerAngle = nextPointerAngle;
+    dragTravel += delta;
+    applyPosition(dragStartPosition + dragTravel);
+    const now = performance.now();
+    dragSamples.push({ position: dragTravel, time: now });
+    trimSamples(now);
+}
+function endDrag(event) {
+    if (pointerId !== event.pointerId) {
+        return;
+    }
+    event.preventDefault();
+    const now = performance.now();
+    trimSamples(now);
+    const firstSample = dragSamples[0];
+    const lastSample = dragSamples[dragSamples.length - 1];
+    const sampleSeconds = firstSample && lastSample ? (lastSample.time - firstSample.time) / 1000 : 0;
+    const sampleVelocity = firstSample && lastSample && sampleSeconds > 0.01
+        ? (lastSample.position - firstSample.position) / sampleSeconds
+        : 0;
+    pointerId = null;
+    lastPointerAngle = null;
+    dragSamples = [];
+    try {
+        wheelElement.releasePointerCapture?.(event.pointerId);
+    }
+    catch {
+        // Pointer capture may already be released by pointercancel.
+    }
+    if (Math.abs(sampleVelocity) > STOP_THRESHOLD) {
+        beginSpin(sampleVelocity);
+    }
+    else {
+        beginSnap();
+        beginAnimation();
+    }
+}
+function handleSpinButton() {
+    const direction = Math.random() > 0.5 ? 1 : -1;
+    const minimum = reducedMotion ? 6 : 8.5;
+    const range = reducedMotion ? 4 : 6.5;
+    beginSpin(direction * (minimum + Math.random() * range));
+}
+function handleSoundButton() {
+    soundEnabled = !soundEnabled;
+    soundButtonElement.setAttribute('aria-pressed', String(soundEnabled));
+    soundStateElement.textContent = soundEnabled ? '开' : '关';
+    if (soundEnabled) {
+        ensureAudio();
+        mechanicalNoteElement.textContent = '声音反馈已开启';
+    }
+    else {
+        mechanicalNoteElement.textContent = '声音反馈已关闭';
+    }
+}
+function handleKeyboard(event) {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault();
+        stopAnimation();
+        angularVelocity = 0;
+        resetTickTracking();
+        const direction = event.key === 'ArrowRight' ? 1 : -1;
+        const target = getNearestSnapTarget(angularPosition) + direction * STEP;
+        snapStartPosition = angularPosition;
+        snapTargetPosition = target;
+        snapElapsed = 0;
+        setMode('snapping');
+        beginAnimation();
+    }
+    else if (event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault();
+        handleSpinButton();
+    }
+}
+function handleVisibilityChange() {
+    if (document.visibilityState === 'hidden') {
+        stopAnimation();
+    }
+    else {
+        previousFrameTime = performance.now();
+        if (mode === 'spinning' || mode === 'snapping') {
+            beginAnimation();
+        }
+    }
+}
+function setupWheelMarks() {
+    for (let index = 0; index < COUNT; index += 1) {
+        const angle = index * STEP;
+        const angleDegrees = (angle * 180) / Math.PI;
+        const tickRadius = 42;
+        const numberRadius = 34;
+        const tick = document.createElement('span');
+        tick.className = `tick${index % 5 === 0 ? ' is-major' : ''}`;
+        tick.style.left = `${50 + Math.sin(angle) * tickRadius}%`;
+        tick.style.top = `${50 - Math.cos(angle) * tickRadius}%`;
+        tick.style.transform = `translate(-50%, -50%) rotate(${angleDegrees}deg)`;
+        tickLayerElement.append(tick);
+        tickElements.push(tick);
+        const number = document.createElement('span');
+        number.className = 'number';
+        number.textContent = String(index + 1);
+        number.style.left = `${50 + Math.sin(angle) * numberRadius}%`;
+        number.style.top = `${50 - Math.cos(angle) * numberRadius}%`;
+        number.style.transform = `translate(-50%, -50%) rotate(${angleDegrees}deg)`;
+        numberLayerElement.append(number);
+    }
+}
+wheelElement.addEventListener('pointerdown', startDrag);
+wheelElement.addEventListener('pointermove', moveDrag);
+wheelElement.addEventListener('pointerup', endDrag);
+wheelElement.addEventListener('pointercancel', endDrag);
+wheelElement.addEventListener('lostpointercapture', () => {
+    if (pointerId !== null) {
+        pointerId = null;
+        lastPointerAngle = null;
+        if (mode === 'dragging') {
+            beginSnap();
+            beginAnimation();
+        }
+    }
+});
+wheelElement.addEventListener('keydown', handleKeyboard);
+spinButtonElement.addEventListener('click', handleSpinButton);
+soundButtonElement.addEventListener('click', handleSoundButton);
+document.addEventListener('visibilitychange', handleVisibilityChange);
+const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+reducedMotionQuery.addEventListener?.('change', (event) => {
+    reducedMotion = event.matches;
+});
+setupWheelMarks();
+renderPosition();
+setResult(1);

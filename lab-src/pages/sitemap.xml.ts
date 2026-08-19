@@ -3,6 +3,9 @@ const site = 'https://lab.mpsteam.cn';
 const urls = [
   `${site}/`,
   `${site}/race/`,
+  `${site}/throw-battle/`,
+  `${site}/little-travel-cat/`,
+  `${site}/fidget-wheel/`,
 ];
 
 export const prerender = true;
