@@ -3,10 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="description"
-      content="指尖机械转盘：模拟金属 EDC 转盘手感的网页解压玩具。"
-    />
+    <meta name="description" content="指尖机械转盘：模拟金属 EDC 转盘手感的网页解压玩具。" />
     <meta name="theme-color" content="#c6c0b1" />
     <link rel="canonical" href="https://lab.mpsteam.cn/fidget-wheel/" />
     <link rel="stylesheet" href="./styles.css" />
@@ -43,6 +40,10 @@
               <span class="reading-head-tip"></span>
             </div>
 
+            <div id="ballOrbit" class="ball-orbit" aria-hidden="true">
+              <span class="orbit-ball"></span>
+            </div>
+
             <div
               id="wheel"
               class="wheel"
@@ -71,19 +72,12 @@
           <div class="readout" aria-live="polite" aria-atomic="true">
             <p class="readout-label">最后停下</p>
             <p id="resultText" class="result-text">当前：1</p>
-            <p id="mechanicalNote" class="mechanical-note" role="status">
-              拖动轮盘然后松手
-            </p>
+            <p id="mechanicalNote" class="mechanical-note" role="status">拖动轮盘然后松手</p>
           </div>
 
           <div class="controls" aria-label="转盘控制">
             <button id="spinButton" class="primary-button" type="button">随手转一下</button>
-            <button
-              id="soundButton"
-              class="secondary-button"
-              type="button"
-              aria-pressed="true"
-            >
+            <button id="soundButton" class="secondary-button" type="button" aria-pressed="true">
               声音 <span id="soundState">开</span>
             </button>
           </div>

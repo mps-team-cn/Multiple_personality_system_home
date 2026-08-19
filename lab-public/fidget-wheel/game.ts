@@ -16,6 +16,10 @@ const STOP_THRESHOLD = 0.14;
 const SNAP_DURATION = 300;
 const REDUCED_SNAP_DURATION = 155;
 const SAMPLE_WINDOW = 110;
+const BALL_FRICTION = 1.05;
+const REDUCED_BALL_FRICTION = 2.8;
+const BALL_MIN_VELOCITY = 5;
+const BALL_MAX_VELOCITY = 24;
 
 const wheel = document.querySelector<HTMLElement>('#wheel');
 const wheelStage = document.querySelector<HTMLElement>('#wheelStage');
@@ -29,6 +33,7 @@ const spinButton = document.querySelector<HTMLButtonElement>('#spinButton');
 const soundButton = document.querySelector<HTMLButtonElement>('#soundButton');
 const soundState = document.querySelector<HTMLElement>('#soundState');
 const readingHead = document.querySelector<HTMLElement>('.reading-head');
+const ballOrbit = document.querySelector<HTMLElement>('#ballOrbit');
 
 if (
   !wheel ||
@@ -42,7 +47,8 @@ if (
   !spinButton ||
   !soundButton ||
   !soundState ||
-  !readingHead
+  !readingHead ||
+  !ballOrbit
 ) {
   throw new Error('Fidget Wheel markup is incomplete.');
 }
@@ -59,6 +65,7 @@ const spinButtonElement = spinButton;
 const soundButtonElement = soundButton;
 const soundStateElement = soundState;
 const readingHeadElement = readingHead;
+const ballOrbitElement = ballOrbit;
 
 const tickElements: HTMLElement[] = [];
 let audioContext: AudioContext | null = null;
@@ -71,6 +78,10 @@ let previousFrameTime = 0;
 let snapStartPosition = 0;
 let snapTargetPosition = 0;
 let snapElapsed = 0;
+let ballAngularPosition = 0;
+let ballAngularVelocity = 0;
+let ballSnapStartPosition = 0;
+let ballSnapTargetPosition = 0;
 let dragStartPosition = 0;
 let dragTravel = 0;
 let lastPointerAngle: number | null = null;
@@ -84,7 +95,7 @@ let soundEnabled = true;
 let reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function normalizeAngle(angle: number): number {
-  return ((angle + Math.PI) % TAU + TAU) % TAU - Math.PI;
+  return ((((angle + Math.PI) % TAU) + TAU) % TAU) - Math.PI;
 }
 
 function shortestAngleDelta(next: number, previous: number): number {
@@ -115,11 +126,21 @@ function setMode(nextMode: SpinMode): void {
   mode = nextMode;
   wheelConsoleElement.classList.toggle('is-spinning', mode !== 'idle');
   spinStatusElement.textContent =
-    mode === 'dragging' ? '拨动中' : mode === 'spinning' ? '惯性中' : mode === 'snapping' ? '吸附中' : '待机';
+    mode === 'dragging'
+      ? '拨动中'
+      : mode === 'spinning'
+        ? '惯性中'
+        : mode === 'snapping'
+          ? '吸附中'
+          : '待机';
 }
 
 function renderPosition(): void {
   wheelElement.style.transform = `rotate(${angularPosition}rad)`;
+}
+
+function renderBallPosition(): void {
+  ballOrbitElement.style.transform = `rotate(${ballAngularPosition}rad)`;
 }
 
 function resetTickTracking(): void {
@@ -129,7 +150,7 @@ function resetTickTracking(): void {
 }
 
 function flashTick(marker: number): void {
-  const index = ((feedbackStartIndex - marker) % COUNT + COUNT) % COUNT;
+  const index = (((feedbackStartIndex - marker) % COUNT) + COUNT) % COUNT;
   const tick = tickElements[index];
   tick?.classList.add('is-hot');
   readingHeadElement.classList.remove('is-flashing');
@@ -137,7 +158,7 @@ function flashTick(marker: number): void {
   readingHeadElement.classList.add('is-flashing');
 
   window.setTimeout(() => tick?.classList.remove('is-hot'), 115);
-  mechanicalNoteElement.textContent = `刻度 · ${((index % COUNT) + COUNT) % COUNT + 1}`;
+  mechanicalNoteElement.textContent = `刻度 · ${(((index % COUNT) + COUNT) % COUNT) + 1}`;
   playTickFeedback();
 }
 
@@ -237,18 +258,32 @@ function stopAnimation(): void {
 function finishSpin(): void {
   stopAnimation();
   angularVelocity = 0;
+  ballAngularVelocity = 0;
   angularPosition = normalizeAngle(snapTargetPosition);
+  ballAngularPosition = 0;
   renderPosition();
+  renderBallPosition();
   const selectedNumber = getSelectedNumber();
   setResult(selectedNumber);
   mechanicalNoteElement.textContent = `停在第 ${selectedNumber} 格`;
   setMode('idle');
 }
 
-function beginSnap(): void {
-  mode = 'snapping';
+function getBallSnapTarget(position: number, velocity: number): number {
+  let delta = normalizeAngle(-position);
+  if (velocity > 0 && delta < 0) {
+    delta += TAU;
+  } else if (velocity < 0 && delta > 0) {
+    delta -= TAU;
+  }
+  return position + delta;
+}
+
+function beginSnap(targetPosition: number = getNearestSnapTarget(angularPosition)): void {
   snapStartPosition = angularPosition;
-  snapTargetPosition = getNearestSnapTarget(angularPosition);
+  snapTargetPosition = targetPosition;
+  ballSnapStartPosition = ballAngularPosition;
+  ballSnapTargetPosition = getBallSnapTarget(ballAngularPosition, ballAngularVelocity);
   snapElapsed = 0;
   setMode('snapping');
 }
@@ -259,7 +294,10 @@ function updateSnap(deltaSeconds: number): void {
   const progress = clamp(snapElapsed / duration, 0, 1);
   const easedProgress = 1 - (1 - progress) ** 3;
   const nextPosition = snapStartPosition + (snapTargetPosition - snapStartPosition) * easedProgress;
+  ballAngularPosition =
+    ballSnapStartPosition + (ballSnapTargetPosition - ballSnapStartPosition) * easedProgress;
   applyPosition(nextPosition);
+  renderBallPosition();
 
   if (progress >= 1) {
     finishSpin();
@@ -273,10 +311,14 @@ function frameAnimation(timestamp: number): void {
 
   if (mode === 'spinning') {
     const damping = reducedMotion ? REDUCED_FRICTION : FRICTION;
+    const ballDamping = reducedMotion ? REDUCED_BALL_FRICTION : BALL_FRICTION;
     const nextVelocity = angularVelocity * Math.exp(-damping * elapsed);
     const nextPosition = angularPosition + nextVelocity * elapsed;
     angularVelocity = nextVelocity;
+    ballAngularVelocity *= Math.exp(-ballDamping * elapsed);
+    ballAngularPosition += ballAngularVelocity * elapsed;
     applyPosition(nextPosition);
+    renderBallPosition();
 
     if (Math.abs(angularVelocity) <= STOP_THRESHOLD) {
       angularVelocity = 0;
@@ -302,8 +344,15 @@ function beginSpin(initialVelocity: number): void {
   if (Math.abs(angularVelocity) < STOP_THRESHOLD) {
     angularVelocity = angularVelocity < 0 ? -STOP_THRESHOLD : STOP_THRESHOLD;
   }
+  const ballDirection = angularVelocity > 0 ? -1 : 1;
+  const ballSpeed = clamp(
+    Math.abs(angularVelocity) * 1.15 + BALL_MIN_VELOCITY,
+    BALL_MIN_VELOCITY,
+    BALL_MAX_VELOCITY
+  );
+  ballAngularVelocity = ballDirection * (reducedMotion ? ballSpeed * 0.72 : ballSpeed);
   setMode('spinning');
-  mechanicalNoteElement.textContent = '刻度正在经过';
+  mechanicalNoteElement.textContent = '小球正在沿外圈减速';
   beginAnimation();
 }
 
@@ -323,6 +372,7 @@ function startDrag(event: PointerEvent): void {
   ensureAudio();
   stopAnimation();
   angularVelocity = 0;
+  ballAngularVelocity = 0;
   pointerId = event.pointerId;
   lastPointerAngle = getPointerAngle(event);
   dragStartPosition = angularPosition;
@@ -345,6 +395,8 @@ function moveDrag(event: PointerEvent): void {
   lastPointerAngle = nextPointerAngle;
   dragTravel += delta;
   applyPosition(dragStartPosition + dragTravel);
+  ballAngularPosition = normalizeAngle(ballAngularPosition - delta * 0.65);
+  renderBallPosition();
 
   const now = performance.now();
   dragSamples.push({ position: dragTravel, time: now });
@@ -411,10 +463,10 @@ function handleKeyboard(event: KeyboardEvent): void {
     resetTickTracking();
     const direction = event.key === 'ArrowRight' ? 1 : -1;
     const target = getNearestSnapTarget(angularPosition) + direction * STEP;
-    snapStartPosition = angularPosition;
-    snapTargetPosition = target;
-    snapElapsed = 0;
-    setMode('snapping');
+    ballAngularVelocity = -direction * 2;
+    ballAngularPosition = normalizeAngle(ballAngularPosition - direction * STEP * 1.5);
+    renderBallPosition();
+    beginSnap(target);
     beginAnimation();
   } else if (event.key === ' ' || event.key === 'Enter') {
     event.preventDefault();
@@ -483,4 +535,5 @@ reducedMotionQuery.addEventListener?.('change', (event) => {
 
 setupWheelMarks();
 renderPosition();
+renderBallPosition();
 setResult(1);
